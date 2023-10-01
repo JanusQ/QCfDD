@@ -238,7 +238,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
     
     #readout error mitigation
     expectations = []
-    if readout_error_mitigation==True: #in the vqe_kwargs
+    if kwargs.get("readout_error_mitigation")==True: #in the vqe_kwargs
         #compute the expectations with readout error mitigation,ac
         for i, count in enumerate(all_counts):
             expectation_val, _=mitigator.expectation_value(count)
