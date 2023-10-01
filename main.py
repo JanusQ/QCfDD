@@ -12,7 +12,9 @@ def main():
     num_orbitals = 6
     coeffs, paulis, HF_bitstring = molecule(atom_string, num_orbitals,charge=1)
     n_qubits = len(paulis[0])
-
+    
+    print(coeffs) #to see the order
+    
     save_dir = "./"
     result_file = "result.txt"
     budget = 500

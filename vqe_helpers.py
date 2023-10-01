@@ -132,7 +132,7 @@ def vqe_circuit(n_qubits, parameters, hamiltonian, init_func=hartreefock, ansatz
 
 def all_transpiled_vqe_circuits(n_qubits, parameters, paulis, backend, seed_transpiler=25, remove_barriers=True, **kwargs) -> dict:
     """
-    Transpiles all VQE circuits for a specific backend efficienlty (uses the fact that structure is the same / same ansatz -> similar transpiled circuits)
+    Transpiles all VQE circuits for a specific backend efficienlty (uses the fact that structure is the same / same ansatz -> similar transpiled circuits) 注意这个优化方法,这是导致后面代码的关键
     n_qubits (Int): Number of qubits in circuit.
     parameters (Iterable[Float]): VQE parameters.
     paulis (Iterable[String]): Corresponding Pauli strings in Hamiltonian (same order as coeffs).
