@@ -214,7 +214,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
         #print('before run simultator')
         if noise_backend==None:
             raise Exception('no noisy simulator passed in, you need consider the noise_backend arg!')
-        result = noise_backend.run(tcircs).result()
+        result = noise_backend.run(tcircs,shots=shots).result()
         #print('after')
         #debug
         #print str(result)
@@ -249,7 +249,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
             #initiate the expectation value to 0
             expectation_val = 0
             #compute the expectation
-            for el in count.keys():
+            for el in count.keys(): #keys应当是0-2^n的所有整数
                 sign = 1
                 #change sign if there are an odd number of ones
                 if el.count('1')%2 == 1:
