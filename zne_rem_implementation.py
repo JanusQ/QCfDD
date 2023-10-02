@@ -42,15 +42,16 @@ n_qubits = len(paulis[0])
 print("number of qubits:",n_qubits)
 
 save_dir = "./"
-result_file = "zne_result.txt"
+result_file = "zne_rem_result.txt"
 
 from qiskit_experiments.library import LocalReadoutError, CorrelatedReadoutError
 #temporary comment
-'''exp = LocalReadoutError(list(range(n_qubits)))
+exp = LocalReadoutError(list(range(n_qubits)))
 exp.analysis.set_options(plot=True)
 result = exp.run(backend_noise)
 #print(result)
-mitigator = result.analysis_results(0).value'''
+mitigator = result.analysis_results(0).value
+#mitigator=None
 
 #debug
 cafqa_params=[0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 3, 0, 3, 1, 0, 1, 0, 2, 0, 1, 0, 0, 2, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 ,2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 1]
@@ -69,7 +70,7 @@ vqe_kwargs = {
         "init_last": False,
         "HF_bitstring": HF_bitstring,
         #ac add:
-        "readout_error_mitigation": False,
+        "readout_error_mitigation": True,
     }
 
 #tcircs = all_transpiled_vqe_circuits(n_qubits, parameters, paulis, backend, **kwargs)
@@ -91,22 +92,25 @@ def qiskit_executor(circuit: qiskit.QuantumCircuit, shots: int = 5000) -> float:
     #针对IIIIIIIIIIII需要特殊对待
     #if _id == len(_id)*'I':
     #    all_counts.append({len(_id)*'0':shots})
-    counts = result.get_counts(0) #无论传入的有几项,传出的是列表,我们默认传入的是一项,所以只取'0'  
+    count = result.get_counts(0) #无论传入的有几项,传出的是列表,我们默认传入的是一项,所以只取'0'  
     
     # Convert from raw measurement counts to the expectation value
     #initiate the expectation value to 0
     expectation_val = 0
     #compute the expectation
-    for el in counts.keys(): #keys应当是0-2^n的所有整数
-        sign = 1
-        #change sign if there are an odd number of ones
-        if el.count('1')%2 == 1:
-            sign = -1
-        expectation_val += sign*counts[el]/shots 
+    if mitigator!=None:
+        expectation_val, _=mitigator.expectation_value(count)
+    else:
+        for el in count.keys(): #keys应当是0-2^n的所有整数
+            sign = 1
+            #change sign if there are an odd number of ones
+            if el.count('1')%2 == 1:
+                sign = -1
+            expectation_val += sign*counts[el]/shots 
     return expectation_val
 
 #debug, ac, only for test
-'''pauli=paulis[3]  #先算第一个电路 注意为2时是有问题的!!! ac
+'''#pauli=paulis[3]  #先算第一个电路 注意为2时是有问题的!!! ac
 imp_circuit=vqe_circuit(n_qubits, parameters, pauli, **vqe_kwargs)
 
 unmitigated=qiskit_executor(imp_circuit)
@@ -259,8 +263,8 @@ def run_vqe(n_qubits, coeffs, paulis, param_guess, budget, shots, backend, save_
     return energy_vqe, params_vqe
 
 
-loss_file = "vqe_zne_loss.txt"
-params_file = "vqe_zne_params.txt"
+loss_file = "vqe_zne_rem_loss.txt"
+params_file = "vqe_zne_rem_params.txt"
 vqe_energy, vqe_params = run_vqe(
     n_qubits=n_qubits,
     coeffs=coeffs,
@@ -273,7 +277,7 @@ vqe_energy, vqe_params = run_vqe(
     save_dir=save_dir,
     loss_file=loss_file,
     params_file=params_file,
-    mitigator=None,
+    mitigator=mitigator,
     noise_backend=backend_noise,
     **vqe_kwargs #MODIFIED,ac
 )
