@@ -216,7 +216,7 @@ def run_cafqa(n_qubits, coeffs, paulis, param_guess, budget, shots, mode, backen
     with open(hypermapper_config_path, "w") as config_file:
         json.dump(config, config_file, indent=4)   #save the dict config into hypermapper_config_path
 
-    stdout = sys.stdout  #ac, I cannot understand the significance of this line
+    #stdout = sys.stdout  #ac, I cannot understand the significance of this line,modified 10.2
     
     #save the results into log_file and output_data_file defined in the config,ac
     #parameters_file
@@ -235,7 +235,7 @@ def run_cafqa(n_qubits, coeffs, paulis, param_guess, budget, shots, mode, backen
             mode=mode, 
             **vqe_kwargs
         ))  #black_box_function
-    sys.stdout = stdout
+    #sys.stdout = stdout #modified,ac,10.2
 
     energy_cafqa = np.inf  #infinite
     x_cafqa = None

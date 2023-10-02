@@ -1,3 +1,4 @@
+#ac: 发现原来的vqe_helper中Y处添加的门有问题 bug fixed
 from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister, Aer, execute, IBMQ, transpile
 from qiskit.transpiler.passes import RemoveBarriers
 #from qiskit.providers.aer import AerSimulator
@@ -123,10 +124,12 @@ def vqe_circuit(n_qubits, parameters, hamiltonian, init_func=hartreefock, ansatz
         elif el == 'Z':
             circuit.measure(qr[i], cr[i])
         elif el == 'X':
-            circuit.u(np.pi/2, 0, np.pi, qr[i])
+            #circuit.u(np.pi/2, 0, np.pi, qr[i]) #ac:attention: u gate is not supported in the mitiq lib! you have to change it into a equivelant gate!
+            circuit.h(qr[i])
             circuit.measure(qr[i], cr[i])
         elif el == 'Y':
-            circuit.u(np.pi/2, 0, np.pi/2, qr[i])
+            #circuit.u(np.pi/2, 0, np.pi/2, qr[i]) #ac: it ought to be -pi/2,-pi/2,pi/2. there seems to be a error?! is it an error made by the original author?
+            circuit.rx(-np.pi/2,qr[i])
             circuit.measure(qr[i], cr[i])
     return circuit
 

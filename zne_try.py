@@ -88,7 +88,7 @@ vqe_kwargs = {
         #ac add:
         "readout_error_mitigation": True,
     }
-pauli=paulis[1]  #先算第一个电路
+pauli=paulis[1]  #ac: 先算第一个电路,注意在2时会出现错误!!! 发现是因为使用了qiskit中的u门而mitiq不支持导致的,此外,还发现原来的vqe_helper中Y处添加的门有问题
 imp_circuit=vqe_circuit(n_qubits, parameters, pauli, **vqe_kwargs)
 
 #tcircs = all_transpiled_vqe_circuits(n_qubits, parameters, paulis, backend, **kwargs)
@@ -107,7 +107,7 @@ def qiskit_executor(circuit: qiskit.QuantumCircuit, shots: int = 5000) -> float:
         shots: Number of times to execute the circuit to compute the expectation value.
     """
     tcircuit= transpile(circuit, sys_backend, optimization_level=0, seed_transpiler=seed_transpiler)
-    result = noise_backend.run(tcircuit).result()
+    result = noise_backend.run(tcircuit, shots=shots).result()
     counts = result.get_counts(0) #对应pauli=paulis[1]  
     
     # Convert from raw measurement counts to the expectation value
