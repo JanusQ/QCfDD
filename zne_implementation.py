@@ -29,6 +29,7 @@ with open('NoiseModel/fakekolkata.pkl', 'rb') as file:
 noise_model_t = noise.NoiseModel()
 noise_model = noise_model_t.from_dict(noise_model)
 backend_noise= AerSimulator(noise_model=noise_model)
+backend_noise=AerSimulator()
 #noise_model=NoiseModel.from_backend(FakeMontreal()) 
 
 

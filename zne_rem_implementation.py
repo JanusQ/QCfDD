@@ -92,6 +92,7 @@ def qiskit_executor(circuit: qiskit.QuantumCircuit, shots: int = 5000) -> float:
     #针对IIIIIIIIIIII需要特殊对待
     #if _id == len(_id)*'I':
     #    all_counts.append({len(_id)*'0':shots})
+
     count = result.get_counts(0) #无论传入的有几项,传出的是列表,我们默认传入的是一项,所以只取'0'  
     
     # Convert from raw measurement counts to the expectation value
@@ -100,6 +101,7 @@ def qiskit_executor(circuit: qiskit.QuantumCircuit, shots: int = 5000) -> float:
     #compute the expectation
     if mitigator!=None:
         expectation_val, _=mitigator.expectation_value(count)
+        #print('103 check rem')
     else:
         for el in count.keys(): #keys应当是0-2^n的所有整数
             sign = 1
@@ -150,6 +152,7 @@ def compute_expectations_zne(n_qubits, parameters,  noise_backend,paulis, shots,
             unmitigated_expectations.append(1.0)
         else:
             imp_circuit=vqe_circuit(n_qubits, parameters, pauli, **vqe_kwargs)
+            imp_circuit=transpile(imp_circuit, sys_backend, optimization_level=2, seed_transpiler=seed_transpiler)
             unmitigated=qiskit_executor(imp_circuit)
             mitigated = zne.execute_with_zne(imp_circuit, qiskit_executor)
             expectations.append(mitigated)
@@ -191,10 +194,19 @@ def vqe_zne(n_qubits, parameters, paulis, coeffs, shots , backend, mode="device_
     """
     #print('vqe start')  #debug,ac
     start = timer()
-    imp_expectations, _=compute_expectations_zne(n_qubits, parameters, noise_backend=noise_backend,paulis=imp_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
-    trivial_expectations = compute_expectations(n_qubits, parameters, noise_backend=noise_backend,paulis=trivial_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
+    imp_expectations, _=compute_expectations_zne(n_qubits, parameters, noise_backend=noise_backend,paulis=imp_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs) #传进去也用不了mitigator=mitigator
+    #_ is unmitigated
+    #temporary, ac, debug
+    #trivial_expectations = compute_expectations(n_qubits, parameters, noise_backend=noise_backend,paulis=trivial_paulis, shots=shots, backend=sys_backend, mode="device_execution",mitigator=mitigator, **vqe_kwargs)
     imp_energy = np.inner(imp_coeffs, imp_expectations)
-    trivial_energy=np.inner(trivial_coeffs,trivial_expectations)
+
+    #ac: debug, temp
+    print('imp_energy: ',imp_energy)
+    imp_unmiti_energy=np.inner(imp_coeffs, _)
+    print('imp_unzne_energy: ',imp_unmiti_energy)
+
+    #trivial_energy=np.inner(trivial_coeffs,trivial_expectations)
+    trivial_energy=0
     loss = imp_energy+trivial_energy
     end = timer()
     print(f'Loss computed by VQE_ZNE is {loss}, in {end - start} s.')
@@ -263,8 +275,9 @@ def run_vqe(n_qubits, coeffs, paulis, param_guess, budget, shots, backend, save_
     return energy_vqe, params_vqe
 
 
-loss_file = "vqe_zne_rem_loss.txt"
-params_file = "vqe_zne_rem_params.txt"
+print('without trivial terms. zne and Local rem')
+loss_file = "vqe_zne_rem_loss2.txt"
+params_file = "vqe_zne_rem_params2.txt"
 vqe_energy, vqe_params = run_vqe(
     n_qubits=n_qubits,
     coeffs=coeffs,
