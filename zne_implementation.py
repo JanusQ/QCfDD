@@ -41,8 +41,8 @@ coeffs, paulis, HF_bitstring = molecule(atom_string, num_orbitals,charge=1)
 n_qubits = len(paulis[0])
 print("number of qubits:",n_qubits)
 
-#save_dir = "./"
-#result_file = "result.txt"
+save_dir = "./"
+result_file = "result.txt"
 
 from qiskit_experiments.library import LocalReadoutError, CorrelatedReadoutError
 #temporary comment
@@ -143,6 +143,7 @@ def compute_expectations_zne(n_qubits, parameters,  noise_backend,paulis, shots,
     for pauli in paulis:
         if pauli == len(pauli)*'I':
             expectations.append(1.0)
+            unmitigated_expectations.append(1.0)
         else:
             imp_circuit=vqe_circuit(n_qubits, parameters, pauli, **vqe_kwargs)
             unmitigated=qiskit_executor(imp_circuit)
@@ -160,7 +161,7 @@ print('imp_coeffs: ',imp_coeffs,'\n imp_paulis',imp_paulis)
 #print('\n trivial_coeffs',trivial_coeffs)
 
 #, mitigator=mitigator 暂时删去
-imp_expectations, _=compute_expectations_zne(n_qubits, parameters, noise_backend=noise_backend,paulis=imp_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
+'''imp_expectations, _=compute_expectations_zne(n_qubits, parameters, noise_backend=noise_backend,paulis=imp_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
 trivial_expectations = compute_expectations(n_qubits, parameters, noise_backend=noise_backend,paulis=trivial_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
 
 #debug: print, ac
@@ -169,9 +170,9 @@ print('unmitigated_imp_expectations:', _)
 print('trivial_expectations: ',trivial_expectations)
 imp_energy = np.inner(imp_coeffs, imp_expectations)
 trivial_energy=np.inner(trivial_coeffs,trivial_expectations)
-print('important energy:',imp_energy,'trivial energy:',trivial_energy,'total energy:',imp_energy+trivial_energy)
+print('important energy:',imp_energy,'trivial energy:',trivial_energy,'total energy:',imp_energy+trivial_energy)'''
 
-def vqe_zne(n_qubits, parameters, coeffs, paulis, coeffs, shots , backend, mode="device_execution", loss_filename=None, params_filename=None,mitigator=None,noise_backend=None, **vqe_kwargs):
+def vqe_zne(n_qubits, parameters, paulis, coeffs, shots , backend, mode="device_execution", loss_filename=None, params_filename=None,mitigator=None,noise_backend=None, **vqe_kwargs):
     """
     Compute the VQE loss/energy.
     n_qubits (Int): Number of qubits in circuit.
@@ -186,10 +187,13 @@ def vqe_zne(n_qubits, parameters, coeffs, paulis, coeffs, shots , backend, mode=
     """
     #print('vqe start')  #debug,ac
     start = timer()
-    expectations = compute_expectations(n_qubits, parameters,mitigator=mitigator,noise_backend=noise_backend, **kwargs)
-    loss = np.inner(coeffs, expectations)
+    imp_expectations, _=compute_expectations_zne(n_qubits, parameters, noise_backend=noise_backend,paulis=imp_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
+    trivial_expectations = compute_expectations(n_qubits, parameters, noise_backend=noise_backend,paulis=trivial_paulis, shots=shots, backend=sys_backend, mode="device_execution", **vqe_kwargs)
+    imp_energy = np.inner(imp_coeffs, imp_expectations)
+    trivial_energy=np.inner(trivial_coeffs,trivial_expectations)
+    loss = imp_energy+trivial_energy
     end = timer()
-    print(f'Loss computed by VQE is {loss}, in {end - start} s.')
+    print(f'Loss computed by VQE_ZNE is {loss}, in {end - start} s.')
     
     if loss_filename is not None:
         with open(loss_filename, 'a') as file:
@@ -253,3 +257,27 @@ def run_vqe(n_qubits, coeffs, paulis, param_guess, budget, shots, backend, save_
     energy_vqe = vqe_result[0].optval
     params_vqe = vqe_result[0].optpar
     return energy_vqe, params_vqe
+
+
+loss_file = "vqe_loss.txt"
+params_file = "vqe_params.txt"
+vqe_energy, vqe_params = run_vqe(
+    n_qubits=n_qubits,
+    coeffs=coeffs,
+    paulis=paulis,
+    param_guess=np.array(cafqa_params)*np.pi/2, #注意,cafqa_params是由CAFQA部分函数计算所得的在Clifford空间中最佳的参数,本段程序是想要在此基础上求得在vqe空间中的最佳参数,并优化cafqa部分所算得的energy的结果
+    budget=budget,
+    shots=shots,
+    mode="device_execution",
+    backend=FakeMontreal(),
+    save_dir=save_dir,
+    loss_file=loss_file,
+    params_file=params_file,
+    mitigator=None,
+    noise_backend=backend_noise,
+    **vqe_kwargs #MODIFIED,ac
+)
+print('vqe_energy, vqe_params',vqe_energy, vqe_params)
+with open(save_dir + result_file, "a") as res_file:
+    res_file.write(f"VQE energy:\n{vqe_energy}\n")
+    res_file.write(f"VQE params:\n{np.array(vqe_params)}\n\n")
