@@ -1,0 +1,5 @@
+__pycache__
+NoiseModel/.*.pkl:ZoneIndentifier
+.vscode
+.idea
+.DS_Store
