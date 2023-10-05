@@ -1,59 +1,104 @@
-# ac: 发现原来的vqe_helper中Y处添加的门有问题 bug fixed
-from qiskit import (
-    QuantumCircuit,
-    ClassicalRegister,
-    QuantumRegister,
-    Aer,
-    execute,
-    transpile,
-)
-from qiskit.transpiler.passes import RemoveBarriers
-from qiskit.circuit.library import EfficientSU2
-from qiskit.quantum_info import Pauli, Operator
-import numpy as np
-from numpy.linalg import eigh
 import csv
-import stim
-from circuit_manipulation import *
+import json
 from timeit import default_timer as timer
-from qiskit_aer import AerSimulator
+from typing import Tuple
 
-def get_ref_energy(coeffs, paulis, return_groundstate=False):
+import hypermapper
+import numpy as np
+import stim
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit.circuit.library import EfficientSU2
+from qiskit.converters import circuit_to_dag, dag_to_circuit
+from qiskit_nature.second_q.circuit.library import HartreeFock
+from qiskit_nature.second_q.drivers import PySCFDriver
+from qiskit_nature.second_q.mappers import JordanWignerMapper, QubitConverter
+from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
+from qiskit_nature.units import DistanceUnit
+
+
+def get_param_num(n_qubits: int, ansatz_reps: int) -> int:
+    """Get the number of parameters in ansatz.
+
+    Parameters
+    ----------
+    n_qubits : int
+        Number of qubits needed by VQE.
+    ansatz_reps : int
+        Repetition of ansatz layer.
+
+    Returns
+    -------
+    int
+        The number of parameters in ansatz.
     """
-    Compute theoretical minimum energy.
-    coeffs (Iterable[Float]): Pauli coefficients in Hamiltonian.
-    paulis (Iterable[String]): Corresponding Pauli strings in Hamiltonian (same order as coeffs).
-    return_groundstate (Bool): Whether to return groundstate.
+    _, num_params = _efficientsu2_full(n_qubits, ansatz_reps)
+    return num_params
 
-    Returns:
-    (Float) minimum energy (optionally also groundstate as array).
+
+def init_molecule(
+    atom_string: str, new_num_orbitals: int = None, charge: int = 0
+) -> Tuple[np.ndarray, np.ndarray, str]:
+    """Compute Hamiltonian for molecule in qubit encoding using Qiskit Nature.
+
+    Parameters
+    ----------
+    atom_string : str
+        String to describe molecule, passed to PySCFDriver.
+    new_num_orbitals : int, optional
+        Number of orbitals in active space, by default None.
+        If None, use default result from PySCFDriver.
+    charge : int, optional
+        The charge of the molecule, by default 0.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray, str]
+        Coefficients for each Pauli string, Pauli strings
+        and Hartree-Fock bitstring.
     """
-    # the final operation
-    final_op = None
 
-    for ii, el in enumerate(paulis):
-        if ii == 0:
-            final_op = coeffs[ii] * Operator(Pauli(el))
-        else:
-            final_op += coeffs[ii] * Operator(Pauli(el))
+    converter = QubitConverter(JordanWignerMapper(), two_qubit_reduction=True)
+    driver = PySCFDriver(
+        atom=atom_string,
+        basis="sto3g",
+        charge=charge,
+        spin=0,
+        unit=DistanceUnit.ANGSTROM,
+    )
+    problem = driver.run()
+    if new_num_orbitals is not None:
+        num_electrons = (problem.num_alpha, problem.num_beta)
+        transformer = ActiveSpaceTransformer(num_electrons, new_num_orbitals)
+        problem = transformer.transform(problem)
+    ferOp = problem.hamiltonian.second_q_op()
+    qubitOp = converter.convert(ferOp, problem.num_particles)
+    initial_state = HartreeFock(
+        problem.num_spatial_orbitals, problem.num_particles, converter
+    )
+    bitstring = "".join(["1" if bit else "0" for bit in initial_state._bitstr])
+    # HINT: Need to reverse order because of qiskit endianness.
+    paulis = [x[::-1] for x in qubitOp.primitive.paulis.to_labels()]
+    # HINT: Add the shift as extra "I" pauli.
+    paulis.append("I" * len(paulis[0]))
+    paulis = np.array(paulis)
+    coeffs = list(qubitOp.primitive.coeffs)
+    # HINT: Add the shift (nuclear repulsion).
+    coeffs.append(problem.nuclear_repulsion_energy)
+    coeffs = np.array(coeffs).real
+    return coeffs, paulis, bitstring
 
-    # compute the eigenvalues
-    evals, evecs = eigh(final_op.data)
 
-    # get the minimum eigenvalue
-    min_eigenval = np.min(evals)
-    if return_groundstate:
-        return min_eigenval, evecs[:, 0]
-    else:
-        return min_eigenval
+def _append_by_hartreefock(
+    circuit: QuantumCircuit, HF_bitstring: str = None
+) -> None:
+    """Append the EfficientSU2 ansatz to input circuit.
 
-
-def hartreefock(circuit, HF_bitstring=None, **kwargs):
-    """
-    Append the EfficientSU2 (full entanglement) ansatz to input circuit, inplace.
-    circuit (QuantumCircuit).
-    HF_bitstring (String): Bitstring to initialize to, e.g. "01101" -> |01101> (in Qiskit ordering |10110>)
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
+    Parameters
+    ----------
+    circuit : QuantumCircuit
+        The initial circuit to be appended.
+    HF_bitstring : str, optional
+        Bitstring to initialize to, e.g. "01101" -> |01101>, by default None.
     """
     if HF_bitstring is None:
         return
@@ -62,15 +107,7 @@ def hartreefock(circuit, HF_bitstring=None, **kwargs):
             circuit.x(i)
 
 
-def efficientsu2_full(n_qubits, repetitions):
-    """
-    EfficientSU2 ansatz with full entanglement.
-    n_qubits (Int): Number of qubits in circuit.
-    repetitions (Int): # ansatz repetitions.
-
-    Returns:
-    (QuantumCircuit, Int) (ansatz, #parameters).
-    """
+def _efficientsu2_full(n_qubits, repetitions):
     ansatz = EfficientSU2(
         num_qubits=n_qubits,
         entanglement="full",
@@ -82,298 +119,182 @@ def efficientsu2_full(n_qubits, repetitions):
     return ansatz, num_params_ansatz
 
 
-def add_ansatz(circuit, ansatz_func, parameters, ansatz_reps=1, **kwargs):
-    """
-    Append an ansatz (full entanglement) to input circuit, inplace.
-    circuit (QuantumCircuit).
-    ansatz_func (Function): Defines the ansatz circuit. Returns (ansatz, #parameters).
-    parameters (Iterable[Float]): VQE parameters.
-    ansatz_reps (Int): # ansatz repetitions.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
-    """
+def _add_ansatz(circuit, parameters, ansatz_reps=1):
     n_qubits = circuit.num_qubits
-    ansatz, _ = ansatz_func(n_qubits, ansatz_reps)
+    ansatz, _ = _efficientsu2_full(n_qubits, ansatz_reps)
     ansatz.assign_parameters(parameters=parameters, inplace=True)
     circuit.compose(ansatz, inplace=True)
 
 
-def vqe_circuit(
-    n_qubits,
-    parameters,
-    hamiltonian,
-    init_func=hartreefock,
-    ansatz_func=efficientsu2_full,
-    ansatz_reps=1,
-    init_last=False,
+def get_vqe_circuit(
+    n_qubits: int,
+    params: np.ndarray,
+    pauli: str,
     **kwargs,
-):
-    """
-    Construct a single VQE circuit.
-    n_qubits (Int): Number of qubits in circuit.
-    parameters (Iterable[Float]): VQE parameters.
-    hamiltonian (String): Pauli string to evaluate.
-    initialization (Function): Takes QuantumCircuit and applies state initialization inplace.
-    parametrization (Function): Takes QuantumCircuit and applies ansatz inplace.
-    init_last (Bool): Whether initialization should come after (True) or before (False) ansatz.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
+) -> QuantumCircuit:
+    """Construct a single VQE circuit.
 
-    Returns:
-    (QuantumCircuit) VQE circuit for a specific Pauli string.
+    Parameters
+    ----------
+    n_qubits : int
+        Number of qubits of the VQE circuit.
+    params : np.ndarry
+        Parameters in VQE circuit.
+    pauli : str
+        Pauli string used to determine the gate for measurement.
+
+    Returns
+    -------
+    QuantumCircuit
+        VQE circuit.
     """
     qr = QuantumRegister(n_qubits)
     cr = ClassicalRegister(n_qubits)
     circuit = QuantumCircuit(qr, cr)
+    init_last = kwargs.get("init_last", False)
+    HF_bitstring = kwargs.get("HF_bitstring", None)
 
     if not init_last:
-        init_func(circuit, **kwargs)
-    # append the circuit with the state preparation ansatz
-    if parameters is not None:
-        add_ansatz(circuit, ansatz_func, parameters, ansatz_reps, **kwargs)
+        _append_by_hartreefock(circuit, HF_bitstring)
+    # HINT: Append the circuit with the state preparation ansatz.
+    if params is not None:
+        _add_ansatz(circuit, params, kwargs.get("ansatz_reps", 1))
     if init_last:
-        init_func(circuit, **kwargs)
+        _append_by_hartreefock(circuit, HF_bitstring)
 
-    # add the measurement operations
-    for i, el in enumerate(hamiltonian):
+    # HINT: Add the measurement operations.
+    for i, el in enumerate(pauli):
         if el == "I":
-            # no measurement for identity
+            # HINT: No measurement for identity.
             continue
         elif el == "Z":
             circuit.measure(qr[i], cr[i])
         elif el == "X":
-            # circuit.u(np.pi/2, 0, np.pi, qr[i]) #ac:attention: u gate is not supported in the mitiq lib! you have to change it into a equivelant gate!
             circuit.h(qr[i])
             circuit.measure(qr[i], cr[i])
         elif el == "Y":
-            # circuit.u(np.pi/2, 0, np.pi/2, qr[i]) #ac: it ought to be -pi/2,-pi/2,pi/2. there seems to be a error?! is it an error made by the original author?
-            circuit.rx(-np.pi / 2, qr[i])
+            circuit.sx(qr[i])
+            circuit.s(qr[i])
             circuit.measure(qr[i], cr[i])
     return circuit
 
 
-def all_transpiled_vqe_circuits(
-    n_qubits,
-    parameters,
-    paulis,
-    backend,
-    seed_transpiler=25,
-    remove_barriers=True,
-    **kwargs,
-) -> dict:
+def _transform_to_allowed_gates(circuit):
     """
-    Transpiles all VQE circuits for a specific backend efficienlty (uses the fact that structure is the same / same ansatz -> similar transpiled circuits) 注意这个优化方法,这是导致后面代码的关键
-    n_qubits (Int): Number of qubits in circuit.
-    parameters (Iterable[Float]): VQE parameters.
-    paulis (Iterable[String]): Corresponding Pauli strings in Hamiltonian (same order as coeffs).
-    backend (IBM backend): Can be simulator, fake backend or real backend; irrelevant with mode = "no_noisy_sim".
-    seed_transpiler (Int): Random seed for the transpiler. Default is 25 because favorite number of Jason D. Chadwick.
-    remove_barriers (Bool): Whether to remove barriers.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
+    circuit (QuantumCircuit): Circuit with only Clifford gates
+    (1q rotations Ry, Rz must be k*pi/2).
+    kwargs (Dict): All the arguments that need to be passed
+    on to the next function calls.
 
     Returns:
-    List[QuantumCircuit] of all transpiled VQE circuits.
+    (QuantumCircuit) Logically equivalent circuit but with
+    gates in required format (no Ry, Rz gates; only S, Sdg, H, X, Z).
     """
-    backend_qubits = backend.configuration().n_qubits
-    circuit = vqe_circuit(n_qubits, parameters, n_qubits * "Z", **kwargs)
-    if remove_barriers:
-        circuit = RemoveBarriers()(circuit)
-    # transpile one circuit
-    t_circuit = transpile(
-        circuit, backend, optimization_level=2, seed_transpiler=seed_transpiler
-    )
+    dag = circuit_to_dag(circuit)
+    threshold = 1e-3
+    # we will substitute nodes inplace
+    for node in dag.op_nodes():
+        if node.name == "ry":
+            angle = float(node.op.params[0])
+            # substitute gates
+            if abs(angle - 0) < threshold:
+                dag.remove_op_node(node)
+            elif abs(angle - np.pi / 2) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.sdg(0)
+                qc_loc.sx(0)
+                qc_loc.s(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+            elif abs(angle - np.pi) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.y(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+            elif abs(angle - 1.5 * np.pi) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.sdg(0)
+                qc_loc.sxdg(0)
+                qc_loc.s(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+        elif node.name == "rz":
+            angle = float(node.op.params[0])
+            # substitute gates
+            if abs(angle - 0) < threshold:
+                dag.remove_op_node(node)
+            elif abs(angle - np.pi / 2) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.s(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+            elif abs(angle - np.pi) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.z(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+            elif abs(angle - 1.5 * np.pi) < threshold:
+                qc_loc = QuantumCircuit(1)
+                qc_loc.sdg(0)
+                qc_loc_instr = qc_loc.to_instruction()
+                dag.substitute_node(node, qc_loc_instr, inplace=True)
+        elif node.name == "x":
+            qc_loc = QuantumCircuit(1)
+            qc_loc.x(0)
+            qc_loc_instr = qc_loc.to_instruction()
+            dag.substitute_node(node, qc_loc_instr, inplace=True)
+    return dag_to_circuit(dag).decompose()
 
-    # get the mapping from virtual to physical
-    virtual_to_physical_mapping = {}
-    for inst in t_circuit:
-        if inst[0].name == "measure":
-            virtual_to_physical_mapping[inst[2][0].index] = inst[1][
-                0
-            ].index  # 这是什么意思? Dt L
-    # remove final measurements
-    t_circuit.remove_final_measurements()
-    # create all transpiled circuits
-    all_transpiled_circuits = []
-    for (
-        pauli
-    ) in (
-        paulis
-    ):  # 这里是在针对不同的Pauli string 构造不同的,基于原有的vqe_circuit的电路(不同之处在于,最后测量的基不同)
-        new_circ = QuantumCircuit(backend_qubits, n_qubits)
-        new_circ.compose(t_circuit, inplace=True)
-        for idx, el in enumerate(pauli):
-            if el == "I":
-                continue
-            elif el == "Z":
-                new_circ.measure(virtual_to_physical_mapping[idx], idx)
-            elif el == "X":
-                new_circ.rz(np.pi / 2, virtual_to_physical_mapping[idx])
-                new_circ.sx(virtual_to_physical_mapping[idx])
-                new_circ.rz(np.pi / 2, virtual_to_physical_mapping[idx])
-                new_circ.measure(virtual_to_physical_mapping[idx], idx)
-            elif el == "Y":
-                new_circ.sx(virtual_to_physical_mapping[idx])
-                new_circ.rz(np.pi / 2, virtual_to_physical_mapping[idx])
-                new_circ.measure(virtual_to_physical_mapping[idx], idx)
-        all_transpiled_circuits.append(
-            new_circ
-        )  # all_transpiled_circuits 就是针对每一个Pauli string的量子电路构成的列表
-    # print(all_transpiled_circuits[-2].draw(fold=-1))
-    return all_transpiled_circuits
 
-
-def compute_expectations(
-    n_qubits,
-    parameters,
-    paulis,
-    shots,
-    backend,
-    mode,
-    mitigator=None,
-    noise_backend=None,
-    **kwargs,
-):
+def _qiskit_to_stim(circuit):
     """
-    Compute the expection values of the Pauli strings.
-    n_qubits (Int): Number of qubits in circuit.
-    parameters (Iterable[Float]): VQE parameters.
-    paulis (Iterable[String]): Corresponding Pauli strings in Hamiltonian (same order as coeffs).
-    backend (IBM backend): Can be simulator, fake backend or real backend; only with mode = "device_execution".
-    mode (String): ["no_noisy_sim", "device_execution", "noisy_sim"].
-    shots (Int): Number of VQE circuit execution shots.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
+    Transform Qiskit QuantumCircuit into stim circuit.
+    circuit (QuantumCircuit): Clifford-only circuit.
 
     Returns:
-    List[Float] of expection value for each Pauli string.
+    (stim._stim_sse2.Circuit) stim circuit.
     """
-    # evaluate the circuits
-    if mode == "no_noisy_sim":
-        # get all the vqe circuits
-        circuits = [
-            vqe_circuit(n_qubits, parameters, pauli, **kwargs)
-            for pauli in paulis
-        ]
-        result = execute(
-            circuits, backend=Aer.get_backend("qasm_simulator"), shots=shots
-        ).result()
-    elif mode == "device_execution":
-        # print('enter compute_expectations')
-        """with open('NoiseModel/fakekolkata.pkl', 'rb') as file:
-            noise_model = pickle.load(file)
-        noise_model1 = noise.NoiseModel()
-        noise_modelreal = noise_model1.from_dict(noise_model)
-        sim_noise = AerSimulator(noise_model=noise_modelreal) #create a simulator with noise
-        """
-
-        tcircs = all_transpiled_vqe_circuits(
-            n_qubits, parameters, paulis, backend, **kwargs
-        )
-        # job = execute(tcircs, backend=backend, shots=shots)
-        # result = job.result()
-        # print('before run simultator')
-        if noise_backend == None:
-            raise Exception(
-                "no noisy simulator passed in, you need consider the noise_backend arg!"
-            )
-        result = noise_backend.run(tcircs, shots=shots).result()
-        # print('after')
-        # debug
-        # print str(result)
-        # print(result)
-        # print(paulis)
-
-    elif mode == "noisy_sim":
-        sim_device = AerSimulator.from_backend(backend)
-        tcircs = all_transpiled_vqe_circuits(
-            n_qubits, parameters, paulis, backend, **kwargs
-        )
-        result = sim_device.run(tcircs, shots=shots).result()
-    else:
-        raise Exception("Invalid circuit execution mode")
-    print("all circs run!")
-
-    all_counts = []
-    for __, _id in enumerate(paulis):
-        if _id == len(_id) * "I":
-            all_counts.append({len(_id) * "0": shots})
-        else:
-            all_counts.append(result.get_counts(__))
-
-    # readout error mitigation
-    expectations = []
-    if kwargs.get("readout_error_mitigation") == True:  # in the vqe_kwargs
-        # compute the expectations with readout error mitigation,ac
-        for i, count in enumerate(all_counts):
-            expectation_val, _ = mitigator.expectation_value(count)
-            expectations.append(expectation_val)
-    else:
-        # compute the expectations
-        for i, count in enumerate(all_counts):
-            # initiate the expectation value to 0
-            expectation_val = 0
-            # compute the expectation
-            for el in count.keys():  # keys应当是0-2^n的所有整数
-                sign = 1
-                # change sign if there are an odd number of ones
-                if el.count("1") % 2 == 1:
-                    sign = -1
-                expectation_val += sign * count[el] / shots
-            expectations.append(expectation_val)
-    return expectations
+    assert isinstance(
+        circuit, QuantumCircuit
+    ), "Circuit is not a Qiskit QuantumCircuit."
+    allowed_gates = [
+        "X",
+        "Y",
+        "Z",
+        "H",
+        "CX",
+        "S",
+        "S_DAG",
+        "SQRT_X",
+        "SQRT_X_DAG",
+    ]
+    stim_circ = stim.Circuit()
+    # make sure right number of qubits in stim circ
+    for i in range(circuit.num_qubits):
+        stim_circ.append("I", [i])
+    for instruction in circuit:
+        gate_lbl = instruction.operation.name.upper()
+        if gate_lbl == "BARRIER":
+            continue
+        elif gate_lbl == "SDG":
+            gate_lbl = "S_DAG"
+        elif gate_lbl == "SX":
+            gate_lbl = "SQRT_X"
+        elif gate_lbl == "SXDG":
+            gate_lbl = "SQRT_X_DAG"
+        assert gate_lbl in allowed_gates, f"Invalid gate {gate_lbl}."
+        qubit_idc = [qb.index for qb in instruction.qubits]
+        stim_circ.append(gate_lbl, qubit_idc)
+    return stim_circ
 
 
-def vqe(
-    n_qubits,
-    parameters,
-    coeffs,
-    loss_filename=None,
-    params_filename=None,
-    mitigator=None,
-    noise_backend=None,
-    **kwargs,
-):
-    """
-    Compute the VQE loss/energy.
-    n_qubits (Int): Number of qubits in circuit.
-    parameters (Iterable[Float]): VQE parameters.ä
-    coeffs (Iterable[Float]): Pauli coefficients in Hamiltonian.
-    loss_filename (String): Path to save file for VQE loss/energy.
-    params_filename (String): Path to save file for VQE parameters.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
-
-    Returns:
-    (Float) VQE energy.
-    """
-    # print('vqe start')  #debug,ac
-    start = timer()
-    expectations = compute_expectations(
-        n_qubits,
-        parameters,
-        mitigator=mitigator,
-        noise_backend=noise_backend,
-        **kwargs,
-    )
-    loss = np.inner(coeffs, expectations)
-    end = timer()
-    print(f"Loss computed by VQE is {loss}, in {end - start} s.")
-
-    if loss_filename is not None:
-        with open(loss_filename, "a") as file:
-            writer = csv.writer(file)
-            writer.writerow([loss])
-
-    if params_filename is not None and parameters is not None:
-        with open(params_filename, "a") as file:
-            writer = csv.writer(file)
-            writer.writerow(parameters)
-    return loss
-
-
-def vqe_cafqa_stim(
+def _vqe_cafqa_stim(
     inputs,
     n_qubits,
     coeffs,
     paulis,
-    init_func=hartreefock,
-    ansatz_func=efficientsu2_full,
+    init_func=_append_by_hartreefock,
+    ansatz_func=_efficientsu2_full,
     ansatz_reps=1,
     init_last=False,
     loss_filename=None,
@@ -382,16 +303,22 @@ def vqe_cafqa_stim(
 ):
     """
     Compute the CAFQA VQE loss/energy using stim.
-    inputs (Dict): CAFQA VQE parameters (values in 0...3) as passed by hypermapper, e.g.: {"x0": 1, "x1": 0, "x2": 0, "x3": 2}
+    inputs (Dict): CAFQA VQE parameters (values in 0...3)
+    as passed by hypermapper, e.g.: {"x0": 1, "x1": 0, "x2": 0, "x3": 2}
     n_qubits (Int): Number of qubits in circuit.
     coeffs (Iterable[Float]): Pauli coefficients in Hamiltonian.
-    paulis (Iterable[String]): Corresponding Pauli strings in Hamiltonian (same order as coeffs).
-    initialization (Function): Takes QuantumCircuit and applies state initialization inplace.
-    parametrization (Function): Takes QuantumCircuit and applies ansatz inplace.
-    init_last (Bool): Whether initialization should come after (True) or before (False) ansatz.
+    paulis (Iterable[String]): Corresponding Pauli
+    strings in Hamiltonian (same order as coeffs).
+    initialization (Function): Takes QuantumCircuit
+    and applies state initialization inplace.
+    parametrization (Function): Takes QuantumCircuit
+    and applies ansatz inplace.
+    init_last (Bool): Whether initialization should come
+    after (True) or before (False) ansatz.
     loss_filename (String): Path to save file for VQE loss/energy.
     params_filename (String): Path to save file for VQE parameters.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
+    kwargs (Dict): All the arguments that need to
+    be passed on to the next function calls.
 
     Returns:
     (Float) CAFQA VQE energy.
@@ -405,11 +332,11 @@ def vqe_cafqa_stim(
     vqe_qc = QuantumCircuit(n_qubits)
     if not init_last:
         init_func(vqe_qc, **kwargs)
-    add_ansatz(vqe_qc, ansatz_func, parameters, ansatz_reps, **kwargs)
+    _add_ansatz(vqe_qc, ansatz_func, parameters, ansatz_reps, **kwargs)
     if init_last:
         init_func(vqe_qc, **kwargs)
-    vqe_qc_trans = transform_to_allowed_gates(vqe_qc)
-    stim_qc = qiskit_to_stim(vqe_qc_trans)
+    vqe_qc_trans = _transform_to_allowed_gates(vqe_qc)
+    stim_qc = _qiskit_to_stim(vqe_qc_trans)
     sim = stim.TableauSimulator()
     sim.do_circuit(stim_qc)
     pauli_expect = [
@@ -429,3 +356,132 @@ def vqe_cafqa_stim(
             writer = csv.writer(file)
             writer.writerow(parameters)
     return loss
+
+
+def run_cafqa(
+    n_qubits,
+    coeffs,
+    paulis,
+    param_guess,
+    budget,
+    shots,
+    mode,
+    backend,
+    save_dir,
+    loss_file,
+    params_file,
+    vqe_kwargs,
+):
+    """
+    Run CAFQA VQE instance. Uses stim for fast Clifford circuit
+    simulation and hypermapper for discrete optimization.
+    n_qubits (Int): Number of qubits in circuit.
+    coeffs (Iterable[Float]): Pauli coefficients in Hamiltonian.
+    paulis (Iterable[String]): Corresponding Pauli strings
+    in Hamiltonian (same order as coeffs).
+    param_guess (Iterable[0...3]): Initial guess for
+    CAFQA VQE parameters, which are factors for pi/2.
+    E.g. param_guess = [1,0,0,2,3,1] for 6-parameter VQE
+    with real parameters [pi/2,0,0,pi,3pi/2,pi/2].
+    budget (Int): Max number of optimization iterations.
+    shots (Int): --Not relevant here--.
+    mode (String): --Not relevant here--.
+    backend (IBM backend): --Not relevant here--.
+    save_dir (String): Save directory.
+    loss_file (String): Name of save file for VQE loss/energy.
+    params_file (String): Name of save file for VQE parameters.
+    vqe_kwargs (Dict): Dictionary with additional keyword
+    arguments for vqe_cafqa_stim() call.
+
+    Returns:
+    Tuple of energy estimate and optimized CAFQA parameters.
+    """
+    # check right number of parameters given
+    _, num_params = _efficientsu2_full(n_qubits, vqe_kwargs["ansatz_reps"])
+    if len(param_guess) == 0:
+        param_guess = [0] * num_params
+    assert (
+        len(param_guess) == num_params
+    ), f"""Number of parameters given ({len(param_guess)})
+    does not match ansatz ({num_params})."""
+
+    hypermapper_config_path = save_dir + "/hypermapper_config.json"
+    config = {}
+    config["application_name"] = "cafqa_optimization"
+    config["optimization_objectives"] = ["value"]
+    number_of_RS = budget // 1  # 向下取整除
+    config["design_of_experiment"] = {}
+    config["design_of_experiment"]["number_of_samples"] = number_of_RS  # NMS
+    config["optimization_iterations"] = budget
+    config["models"] = {}
+    config["models"]["model"] = "random_forest"
+    config["input_parameters"] = {}
+    config["print_best"] = True
+    config["print_posterior_best"] = True
+    for i in range(num_params):
+        x = {}
+        x["parameter_type"] = "ordinal"  # 序数
+        x["values"] = [0, 1, 2, 3]
+        x["parameter_default"] = param_guess[i]
+        config["input_parameters"]["x" + str(i)] = x
+    config["log_file"] = save_dir + "/hypermapper_log.log"
+    config["output_data_file"] = save_dir + "/hypermapper_output.csv"
+    with open(hypermapper_config_path, "w") as config_file:
+        json.dump(
+            config, config_file, indent=4
+        )  # save the dict config into hypermapper_config_path
+
+    hypermapper.optimizer.optimize(
+        hypermapper_config_path,
+        lambda x: _vqe_cafqa_stim(
+            inputs=x,
+            n_qubits=n_qubits,
+            loss_filename=save_dir + "/" + loss_file,
+            params_filename=save_dir + "/" + params_file,
+            paulis=paulis,
+            coeffs=coeffs,
+            shots=shots,
+            backend=backend,
+            mode=mode,
+            **vqe_kwargs,
+        ),
+    )  # black_box_function
+    # sys.stdout = stdout #modified,ac,10.2
+
+    energy_cafqa = np.inf  # infinite
+    x_cafqa = None
+    with open(
+        config["log_file"]
+    ) as f:  # read the output of function 'minimize'
+        lines = f.readlines()
+        counter = 0
+        for idx, line in enumerate(
+            lines[::-1]
+        ):  # [::-1]： it stands for reverse order
+            # enumerate is useful for obtaining an indexed list:
+            # (0, seq[0]), (1, seq[1]), (2, seq[2]), ...
+            if (
+                line[:16] == "Best point found"
+                or line[:29] == "Minimum of the posterior mean"
+            ):  # line[:16] the first 16 items,ac
+                """格式大致如下:
+
+                Best point found:
+                x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,value
+                0,0,0,0,0,0,0,0,0,0,0,0,-1.0661086493179344
+                """
+                counter += 1
+                parts = lines[-1 - idx + 2].split(",")
+                # .split: Return a list of the substrings in the string,
+                # using sep as the separator string.
+                # partition the contents of lines[-1-idx+2] into list (parts),
+                # with the sign of partition as ','
+                energy = float(parts[-1])
+                if energy < energy_cafqa:
+                    energy_cafqa = energy
+                    x_cafqa = [
+                        int(y) for y in parts[:-1]
+                    ]  # record the params of x_i
+            if counter == 2:
+                break
+    return energy_cafqa, x_cafqa

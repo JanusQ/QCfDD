@@ -1,247 +1,164 @@
-# this code is used to completely implement the ZNE mitigation method
-# pay attention that we (for now) will only do ZNE on the important terms
-# (pauli string with more weight)
-from argparse import ArgumentParser
 import csv
-import numpy as np
-from typing import Iterable, Union, List, Tuple
-from qiskit import QuantumCircuit, transpile
-from qiskit.providers.fake_provider import FakeMontreal
 from timeit import default_timer as timer
-from qiskit_experiments.library import (
-    LocalReadoutError,
-    CorrelatedReadoutError,
-)
-from skquant.opt import minimize
-from qiskit.utils import algorithm_globals
-from qiskit_aer import AerSimulator
-from qiskit_aer.noise import NoiseModel
-import pickle
+from typing import Callable, List, Tuple
+
+import numpy as np
 from mitiq import zne
-from global_settings import (
-    BUDGET,
-    SAVE_DIR,
-    SEED,
-    PREPARED_CAFQA_PARAMS,
-    SEED_TRANSPILER,
-)
-from vqe_experiment import init_cafqa
-from vqe_utils import efficientsu2_full, hartreefock, vqe_circuit
+from qiskit import QuantumCircuit, transpile
+from skquant.opt import minimize
 
-algorithm_globals.random_seed = SEED
-
-# Load noise model and create simulator.
-with open("NoiseModel/fakekolkata.pkl", "rb") as file:
-    noise_model_dict = pickle.load(file)
-noisy_simulator = AerSimulator(
-    noise_model=NoiseModel.from_dict(noise_model_dict)
-)
-sys_backend = FakeMontreal()
+from global_settings import Context
+from vqe_utils import get_param_num, get_vqe_circuit
 
 
-# Read in and process the molecule infomation
-bond_length = 1.0
-# OH molecule string
-atom_string = "O 0 0 0; H 0.45 -0.1525 -0.8454"
-num_orbitals = 6
-coefs, paulis, HF_bitstring = init_cafqa(atom_string, num_orbitals, charge=1)
-n_qubits = len(paulis[0])
-print(f"Require {n_qubits} qubits.")
-
-
-exp = LocalReadoutError(list(range(n_qubits)))
-exp.analysis.set_options(plot=True)
-result = exp.run(noisy_simulator)
-mitigator = result.analysis_results(0).value
-
-
-# VQE with CAFQA initialization
-# vqe params
-parameters = PREPARED_CAFQA_PARAMS
-init_func = hartreefock
-ansatz_func = efficientsu2_full
-ansatz_reps = 2
-
-
-def run_circuit(circuit: QuantumCircuit, shots: int = 5000) -> float:
-    """Returns the expectation value to be mitigated.
-
-    Args:
-        circuit: Circuit to run.
-        shots: Times to execute the circuit to compute the expectation value.
-    """
-    transpiled_circuit = transpile(
-        circuit,
-        sys_backend,
-        optimization_level=0,
-        seed_transpiler=SEED_TRANSPILER,
-    )
-    counts = (
-        noisy_simulator.run(transpiled_circuit, shots=shots)
-        .result()
-        .get_counts(0)
-    )
-    expectation_val, _ = mitigator.expectation_value(counts)
-    return expectation_val
-
-
-def find_important_terms(
-    coefs: np.ndarray, threshold: float = 1.0
-) -> List[int]:
-    """Find important pauli strings which need
-    to be applied ZNE to improve accuracy.
+def get_circuit_executor(ctx: Context) -> Callable:
+    """Construct the circuit execution function.
 
     Parameters
     ----------
-    coefs : np.ndarry
-        Coefficients for each Pauli strings.
-    threshold: float, optional
-        The threshold that can be considered as a large weight, by default 1.0.
+    ctx : Context
+        Context with configuration and meta information of the application.
 
     Returns
     -------
-    List[int]
-        A list of indexes representing important Pauli strings.
+    Callable
+        The circuit execution function.
     """
-    res = []
-    for i, j in enumerate(coefs):
-        if abs(j) > threshold:
-            res.append(i)
-    return res
 
+    def run_circuit(circuit: QuantumCircuit) -> float:
+        """Returns the expectation value to be mitigated.
 
-def cut_paulis(
-    important_terms: List[int], coefs: np.ndarray, paulis: np.ndarray
-) -> Tuple[List, List, List, List]:
-    """Divide Pauli strings into important and trivial parts.
+        Args:
+            circuit: Circuit to run.
+        """
+        transpiled_circuit = transpile(
+            circuit,
+            ctx.system_model,
+            optimization_level=0,
+            seed_transpiler=ctx.seed,
+        )
+        counts = (
+            ctx.noisy_simulator.run(transpiled_circuit, shots=ctx.shots)
+            .result()
+            .get_counts(0)
+        )
+        expectation_val, _ = ctx.readout_mitigator.expectation_value(counts)
+        return expectation_val
 
-    Parameters
-    ----------
-    important_terms : List[int]
-        Indexes of important Pauli strings.
-    coefs : np.ndarray
-        Coefficients for each Pauli string.
-    paulis : np.ndarray
-        Pauli strings decomposed from Hamiltonian.
-
-    Returns
-    -------
-    Tuple[List, List, List, List]
-        Important Pauli strings with coefficients and
-        trivial Pauli strings with coefficients.
-    """
-    important_coefs = [coefs[i] for i in important_terms]
-    important_paulis = [paulis[i] for i in important_terms]
-    trivial_coefs = list(coefs)
-    trivial_paulis = list(paulis)
-    for ind in important_terms[::-1]:
-        trivial_coefs.pop(ind)
-        trivial_paulis.pop(ind)
-    return important_coefs, important_paulis, trivial_coefs, trivial_paulis
+    return run_circuit
 
 
 def get_pauli_expectations(
-    n_qubits,
-    params,
-    paulis,
-    **kwargs,
-) -> List:
+    ctx: Context,
+    paulis: List[str],
+    params: np.ndarray,
+) -> List[float]:
+    # TODO: Pauli grouping.
+    """Compute the expectations of each Pauli string.
+
+    Parameters
+    ----------
+    ctx : Context
+        Context with configuration and meta information of the application.
+    paulis : List[str]
+        Pauli strings constituting the Hamiltonian.
+    params : np.ndarray
+        Parameters in quantum circuit of VQE.
+
+    Returns
+    -------
+    List
+        Returns a list, where each element represents the expected value
+        of the measurement with the corresponding Pauli string.
+    """
     pauli_expectations = []
     for pauli in paulis:
         if pauli == len(pauli) * "I":
+            # NOTE: Result of identity is always 1 as the unit vector.
             pauli_expectations.append(1.0)
         else:
-            circuit = vqe_circuit(n_qubits, params, pauli, **kwargs)
+            # TODO: Use a single instance and assign parameters.
+            circuit = get_vqe_circuit(
+                ctx.num_qubits, params, pauli, **ctx.vqe_kwargs
+            )
             circuit = transpile(
                 circuit,
-                sys_backend,
+                ctx.system_model,
                 optimization_level=2,
-                seed_transpiler=SEED_TRANSPILER,
+                seed_transpiler=ctx.seed,
             )
-            mitigated = zne.execute_with_zne(circuit, run_circuit)
+            mitigated = zne.execute_with_zne(
+                circuit, get_circuit_executor(ctx)
+            )
             pauli_expectations.append(mitigated)
     return pauli_expectations
 
 
-important_terms = find_important_terms(coefs, threshold=1)
-print("important_terms: ", important_terms)
-imp_coefs, imp_paulis, trivial_coefs, trivial_paulis = cut_paulis(
-    important_terms, coefs, paulis
-)
-print("imp_coefs: ", imp_coefs, "\n imp_paulis", imp_paulis)
-
-
 def run_vqe_iter(
-    n_qubits,
-    parameters,
-    loss_filename=None,
-    params_filename=None,
-    **kwargs,
-):
-    """
-    Compute the VQE loss/energy.
-    n_qubits (Int): Number of qubits in circuit.
-    parameters (Iterable[Float]): VQE parameters.ä
-    coefs (Iterable[Float]): Pauli coefficients in Hamiltonian.
-    loss_filename (String): Path to save file for VQE loss/energy.
-    params_filename (String): Path to save file for VQE parameters.
-    kwargs (Dict): All the arguments that need to be passed on to the next function calls.
-    Returns:
-    (Float) VQE energy.
+    ctx: Context,
+    params: np.ndarray,
+) -> float:
+    """Compute the ground state energy in each iteration.
+
+    Parameters
+    ----------
+    ctx : Context
+        Context with configuration and meta information of the application.
+    params : np.ndarray
+        Parameters in quantum circuit of VQE.
+
+    Returns
+    -------
+    float
+        The computed energy in each iteration.
     """
     start = timer()
     pauli_expectations = get_pauli_expectations(
-        n_qubits,
-        parameters,
-        paulis=imp_paulis,
-        **kwargs,
+        ctx=ctx, paulis=ctx.hamiltonian.important_paulis, params=params
     )
-    important_energy = np.inner(imp_coefs, pauli_expectations)
+    important_energy = np.inner(
+        ctx.hamiltonian.important_coefs, pauli_expectations
+    )
 
-    print("imp_energy: ", important_energy)
-
-    # trivial_energy=np.inner(trivial_coefs,trivial_expectations)
+    # TODO: Add code to compute trivial_energy
     trivial_energy = 0
     loss = important_energy + trivial_energy
     end = timer()
-    print(f"Loss computed by VQE_ZNE is {loss}, in {end - start} s.")
+    print(f"Energy computed by VQE is {loss}, in {end - start}s.")
 
-    if loss_filename is not None:
-        with open(loss_filename, "a") as file:
-            writer = csv.writer(file)
-            writer.writerow([loss])
+    with open("energy_log.csv", "a") as file:
+        writer = csv.writer(file)
+        writer.writerow([loss])
 
-    if params_filename is not None and parameters is not None:
-        with open(params_filename, "a") as file:
-            writer = csv.writer(file)
-            writer.writerow(parameters)
+    with open("params_log.csv", "a") as file:
+        writer = csv.writer(file)
+        writer.writerow(params)
     return loss
 
 
 def run_vqe(
-    n_qubits: int,
-    param_guess: Union[Iterable[float], np.ndarray],
-    budget: int,
-    save_dir: str,
-    loss_file: str,
-    params_file: str,
-    **kwargs,
-):
-    """
-    Run VQE instance. Uses skquant for optimization.
-    n_qubits (Int): Number of qubits in circuit.
-    param_guess (Iterable[Float]): Initial guess for VQE parameters.
-    budget (Int): Max number of optimization iterations.
-    save_dir (String): Save directory.
-    loss_file (String): Name of save file for VQE loss/energy.
-    params_file (String): Name of save file for VQE parameters.
-    kwargs (Dict): Dictionary with additional keyword arguments for vqe() call.
+    ctx: Context,
+) -> Tuple[float, np.ndarray]:
+    """Run VQE instance to calculate the ground
+    state energy of the hydroxyl cation.
 
-    Returns:
-    Tuple of energy estimate and optimized parameters.
+    Parameters
+    ----------
+    ctx : Context
+        Context with configuration and meta information of the application.
+
+    Returns
+    -------
+    Tuple[float, np.ndarray]
+        Return the caculated ground state energy of ·OH and
+        the best parameters during VQE iterations.
     """
-    # check right number of parameters given
-    _, num_params = efficientsu2_full(n_qubits, kwargs.get("ansatz_reps", 2))
+
+    # HINT: Check number of parameters given.
+    num_params = get_param_num(
+        ctx.num_qubits, ctx.vqe_kwargs.get("ansatz_reps", 2)
+    )
+    param_guess = ctx.prepared_cafqa_params
     if len(param_guess) == 0:
         param_guess = [0] * num_params
     assert (
@@ -250,36 +167,19 @@ def run_vqe(
     {len(param_guess)} are given but there are {num_params} parameters."""
 
     vqe_result = minimize(
-        lambda x: run_vqe_iter(
-            n_qubits=n_qubits,
-            parameters=x,
-            loss_filename=save_dir + "/" + loss_file,
-            params_filename=save_dir + "/" + params_file,
-            **vqe_kwargs,
-        ),
+        lambda x: run_vqe_iter(ctx, params=x),
         x0=np.array(param_guess),
         bounds=np.array([[0, np.pi * 2]] * num_params),
-        budget=budget,
-        method="imfil",
+        budget=ctx.budget,
+        method=ctx.optimization_method,
     )
     energy_vqe = vqe_result[0].optval
     params_vqe = vqe_result[0].optpar
     return energy_vqe, params_vqe
 
 
-print("without trivial terms. zne and Local rem")
-loss_file = "vqe_zne_rem_loss2.txt"
-params_file = "vqe_zne_rem_params2.txt"
-vqe_energy, vqe_params = run_vqe(
-    n_qubits=n_qubits,
-    param_guess=np.array(PREPARED_CAFQA_PARAMS) * np.pi / 2,
-    budget=BUDGET,
-    save_dir=SAVE_DIR,
-    loss_file=loss_file,
-    params_file=params_file,
-    **vqe_kwargs,  # MODIFIED,ac
-)
-print("vqe_energy, vqe_params", vqe_energy, vqe_params)
-with open(SAVE_DIR + RESULT_FILE, "a") as res_file:
-    res_file.write(f"VQE energy:\n{vqe_energy}\n")
-    res_file.write(f"VQE params:\n{np.array(vqe_params)}\n\n")
+def solve(ctx: Context) -> None:
+    energy, params = run_vqe(ctx)
+    with open(f"{ctx.save_dir}/ans.txt", "a") as file:
+        file.write(f"energy:\n{energy}\n")
+        file.write(f"params:\n{np.array(params)}\n")
