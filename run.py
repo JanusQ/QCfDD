@@ -31,6 +31,7 @@ def get_circuit_executor(ctx: Context) -> Callable:
         Args:
             circuit: Circuit to run.
         """
+        # HACK: Waste transpiling.
         transpiled_circuit = transpile(
             circuit,
             ctx.system_model,
