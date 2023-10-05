@@ -168,7 +168,7 @@ def run_vqe(
 
     vqe_result = minimize(
         lambda x: run_vqe_iter(ctx, params=x),
-        x0=np.array(param_guess),
+        x0=np.array(param_guess) * np.pi / 2.0,
         bounds=np.array([[0, np.pi * 2]] * num_params),
         budget=ctx.budget,
         method=ctx.optimization_method,

@@ -3,3 +3,4 @@ NoiseModel/.*.pkl:ZoneIndentifier
 .vscode
 .idea
 .DS_Store
+result
