@@ -126,11 +126,11 @@ def run_vqe_iter(
     end = timer()
     print(f"Energy computed by VQE is {loss}, in {end - start}s.")
 
-    with open("energy_log.csv", "a") as file:
+    with open(f"{ctx.save_dir}/energy_log.csv", "a") as file:
         writer = csv.writer(file)
         writer.writerow([loss])
 
-    with open("params_log.csv", "a") as file:
+    with open(f"{ctx.save_dir}/params_log.csv", "a") as file:
         writer = csv.writer(file)
         writer.writerow(params)
     return loss

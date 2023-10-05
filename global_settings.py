@@ -1,3 +1,4 @@
+from pathlib import Path
 import pickle
 import random
 from argparse import Namespace
@@ -37,7 +38,7 @@ Context = NamedTuple(
         ("optimization_method", str),
         ("system_model", Union[FakeCairo, FakeKolkata, FakeMontreal]),
         ("budget", int),
-        ("save_dir", str),
+        ("save_dir", Path),
         ("seed", int),
         ("shots", int),
         ("hamiltonian", Hamiltonian),
@@ -161,6 +162,8 @@ def get_context(args: Namespace) -> Context:
         trivial_paulis,
     ) = _cut_paulis(_find_important_terms(coefs), coefs, paulis)
     _seed_everything(args.seed)
+    save_dir = Path(args.save)
+    save_dir.mkdir(exist_ok=True)
     return Context(
         readout_mitigator=_get_readout_mitigator(
             args.readout_mitigator, num_qubits, noisy_simulator
@@ -170,7 +173,7 @@ def get_context(args: Namespace) -> Context:
         optimization_method=args.optimizer,
         system_model=FakeMontreal(),
         budget=args.budget,
-        save_dir=args.save,
+        save_dir=save_dir,
         seed=args.seed,
         shots=args.shots,
         hamiltonian=Hamiltonian(
