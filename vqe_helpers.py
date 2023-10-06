@@ -129,7 +129,10 @@ def vqe_circuit(n_qubits, parameters, hamiltonian, init_func=hartreefock, ansatz
             circuit.measure(qr[i], cr[i])
         elif el == 'Y':
             #circuit.u(np.pi/2, 0, np.pi/2, qr[i]) #ac: it ought to be -pi/2,-pi/2,pi/2. there seems to be a error?! is it an error made by the original author?
-            circuit.rx(-np.pi/2,qr[i])
+            #circuit.rx(-np.pi/2,qr[i])
+            #retry, ac, debug
+            circuit.sx(qr[i])
+            circuit.s(qr[i])
             circuit.measure(qr[i], cr[i])
     return circuit
 
@@ -223,6 +226,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
         #print str(result)
         #print(result)
         #print(paulis)
+        print('1',timer()) #debug, ac, 106
         
     elif mode == 'noisy_sim':
         sim_device = AerSimulator.from_backend(backend)
@@ -241,7 +245,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
     
     #readout error mitigation
     expectations = []
-    if kwargs.get("readout_error_mitigation")==True: #in the vqe_kwargs
+    if kwargs.get("readout_error_mitigation")==True and mitigator!= None: #in the vqe_kwargs
         #compute the expectations with readout error mitigation,ac
         for i, count in enumerate(all_counts):
             expectation_val, _=mitigator.expectation_value(count)
@@ -259,6 +263,7 @@ def compute_expectations(n_qubits, parameters, paulis, shots, backend, mode,miti
                     sign = -1
                 expectation_val += sign*count[el]/shots
             expectations.append(expectation_val)
+    print('2',timer()) #debug, ac, 106
     return expectations
 
 def vqe(n_qubits, parameters, coeffs, loss_filename=None, params_filename=None,mitigator=None,noise_backend=None, **kwargs):
