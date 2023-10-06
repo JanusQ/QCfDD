@@ -20,10 +20,8 @@ from vqe_utils import init_molecule
 Hamiltonian = NamedTuple(
     "Hamiltonian",
     [
-        ("important_coefs", List[float]),
-        ("important_paulis", List[str]),
-        ("trivial_coefs", List[float]),
-        ("trivial_paulis", List[str]),
+        ("coefs", List[float]),
+        ("paulis", List[str]),
     ],
 )
 Context = NamedTuple(
@@ -117,9 +115,9 @@ def _find_important_terms(
     return res
 
 
-def _cut_paulis(
+def _simplify_paulis(
     important_terms: List[int], coefs: np.ndarray, paulis: np.ndarray
-) -> Tuple[List[float], List[str], List[float], List[str]]:
+) -> Tuple[List[float], List[str]]:
     """Divide Pauli strings into important and trivial parts.
 
     Parameters
@@ -134,17 +132,11 @@ def _cut_paulis(
     Returns
     -------
     Tuple[List, List, List, List]
-        Important Pauli strings with coefficients and
-        trivial Pauli strings with coefficients.
+        Important Pauli strings with coefficients.
     """
     important_coefs = [coefs[i] for i in important_terms]
     important_paulis = [paulis[i] for i in important_terms]
-    trivial_coefs = list(coefs)
-    trivial_paulis = list(paulis)
-    for ind in important_terms[::-1]:
-        trivial_coefs.pop(ind)
-        trivial_paulis.pop(ind)
-    return important_coefs, important_paulis, trivial_coefs, trivial_paulis
+    return important_coefs, important_paulis
 
 
 def get_context(args: Namespace) -> Context:
@@ -155,12 +147,9 @@ def get_context(args: Namespace) -> Context:
         HF_bitstring,
         num_qubits,
     ) = _get_quantum_info()
-    (
-        important_coefs,
-        important_paulis,
-        trivial_coefs,
-        trivial_paulis,
-    ) = _cut_paulis(_find_important_terms(coefs), coefs, paulis)
+    coefs, paulis = _simplify_paulis(
+        _find_important_terms(coefs, args.threshold), coefs, paulis
+    )
     _seed_everything(args.seed)
     save_dir = Path(args.save)
     save_dir.mkdir(exist_ok=True)
@@ -176,12 +165,7 @@ def get_context(args: Namespace) -> Context:
         save_dir=save_dir,
         seed=args.seed,
         shots=args.shots,
-        hamiltonian=Hamiltonian(
-            important_coefs=important_coefs,
-            important_paulis=important_paulis,
-            trivial_coefs=trivial_coefs,
-            trivial_paulis=trivial_paulis,
-        ),
+        hamiltonian=Hamiltonian(coefs=coefs, paulis=paulis),
         vqe_kwargs={
             "ansatz_reps": 2,
             "init_last": False,

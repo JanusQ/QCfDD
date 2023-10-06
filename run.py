@@ -115,26 +115,23 @@ def run_vqe_iter(
     """
     start = timer()
     pauli_expectations = get_pauli_expectations(
-        ctx=ctx, paulis=ctx.hamiltonian.important_paulis, params=params
+        ctx=ctx, paulis=ctx.hamiltonian.paulis, params=params
     )
-    important_energy = np.inner(
-        ctx.hamiltonian.important_coefs, pauli_expectations
+    # NOTE: We only compute the important part when execute locally.
+    energy = np.inner(
+        ctx.hamiltonian.coefs, pauli_expectations
     )
-
-    # TODO: Add code to compute trivial_energy
-    trivial_energy = 0
-    loss = important_energy + trivial_energy
     end = timer()
-    print(f"Energy computed by VQE is {loss}, in {end - start}s.")
+    print(f"Energy computed by VQE is {energy}, in {end - start}s.")
 
     with open(f"{ctx.save_dir}/energy_log.csv", "a") as file:
         writer = csv.writer(file)
-        writer.writerow([loss])
+        writer.writerow([energy])
 
     with open(f"{ctx.save_dir}/params_log.csv", "a") as file:
         writer = csv.writer(file)
         writer.writerow(params)
-    return loss
+    return energy
 
 
 def run_vqe(
