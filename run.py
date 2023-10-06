@@ -24,6 +24,18 @@ def get_circuit_executor(ctx: Context) -> Callable:
     Callable
         The circuit execution function.
     """
+    # NOTE: 传进来一个带参数的ansatz，然后利用ansatz计算每个Pauli的期望，
+    # NOTE: 即 `estimator.run([ansatz]*num_paulis,pauils,params)`，
+    # NOTE: paulis可用SparsePauliOp这个类（包含字符串和系数）。
+    # NOTE: 这就是Estimator的用处，利用Estimator可实现Pauli分组。
+    # NOTE: 在Estimator中添加读取噪声抑制方法。
+
+    # HINT: 本函数传入需要计算的Paulis，返回一个用于ZNE的函数：
+    # HINT: compute_expectation(ansatz（确定参数）:QuantumCircuit)->float
+    # HINT:   return estimator.run([ansatz]*num_paulis, pauilis,params)
+    # HINT: ZNE的结果直接作为能量值，用经典迭代器优化参数params。
+
+    # TODO: 重点是要在Estimator中添加读取噪声抑制方法。
 
     def run_circuit(circuit: QuantumCircuit) -> float:
         """Returns the expectation value to be mitigated.
@@ -118,9 +130,7 @@ def run_vqe_iter(
         ctx=ctx, paulis=ctx.hamiltonian.paulis, params=params
     )
     # NOTE: We only compute the important part when execute locally.
-    energy = np.inner(
-        ctx.hamiltonian.coefs, pauli_expectations
-    )
+    energy = np.inner(ctx.hamiltonian.coefs, pauli_expectations)
     end = timer()
     print(f"Energy computed by VQE is {energy}, in {end - start}s.")
 

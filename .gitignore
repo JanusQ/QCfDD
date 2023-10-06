@@ -4,3 +4,4 @@ NoiseModel/.*.pkl:ZoneIndentifier
 .idea
 .DS_Store
 result
+test.py
