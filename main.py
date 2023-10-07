@@ -1,7 +1,7 @@
 from argparse import ArgumentParser, MetavarTypeHelpFormatter
 
 from global_settings import get_context
-from run import solve
+from run import solve, debug
 
 if __name__ == "__main__":
     parser = ArgumentParser(
@@ -32,6 +32,7 @@ if __name__ == "__main__":
         default=500,
         help="Budget for iterations. Defaults to 500.",
     )
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--readout-mitigator",
         type=str,
@@ -69,4 +70,5 @@ if __name__ == "__main__":
         can be considered as a large weight. Defaults to 1.0.""",
     )
     # print(get_context(parser.parse_args()))
-    solve(get_context(parser.parse_args()))
+    args = parser.parse_args()
+    (debug if args.debug else solve)(get_context(args))

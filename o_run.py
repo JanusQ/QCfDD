@@ -8,8 +8,7 @@ from qiskit import QuantumCircuit, transpile
 from skquant.opt import minimize
 
 from global_settings import Context
-from vqe_utils import Estimator, get_ansatz, get_vqe_circuit
-from qiskit.quantum_info import SparsePauliOp
+from vqe_utils import get_param_num, get_vqe_circuit
 
 
 def get_circuit_executor(ctx: Context) -> Callable:
@@ -25,8 +24,9 @@ def get_circuit_executor(ctx: Context) -> Callable:
     Callable
         The circuit execution function.
     """
+
     # NOTE: 传进来一个带参数的ansatz，然后利用ansatz计算每个Pauli的期望，
-    # NOTE: 即 `estimator.run(ansatz,pauils)`，
+    # NOTE: 即 `estimator.run([ansatz]*num_paulis,pauils,params)`，
     # NOTE: paulis可用SparsePauliOp这个类（包含字符串和系数）。
     # NOTE: 这就是Estimator的用处，利用Estimator可实现Pauli分组。
     # NOTE: 在Estimator中添加读取噪声抑制方法。
@@ -38,39 +38,28 @@ def get_circuit_executor(ctx: Context) -> Callable:
 
     # TODO: 重点是要在Estimator中添加读取噪声抑制方法。
 
-    def compute_expectation(parameterized_ansatz: QuantumCircuit) -> float:
+    def run_circuit(circuit: QuantumCircuit) -> float:
         """Returns the expectation value to be mitigated.
 
         Args:
             circuit: Circuit to run.
         """
-        return (
-            Estimator(
-                run_options={"seed": ctx.seed, "shots": ctx.shots},
-                transpile_options={
-                    "optimization_level": 2,
-                    "backend": ctx.system_model,
-                    "seed_transpiler": ctx.seed,
-                },
-                backend=ctx.noisy_simulator,
-                mitigator=ctx.readout_mitigator,
-            )
-            .run(
-                parameterized_ansatz,
-                SparsePauliOp.from_list(
-                    [
-                        (pauli, coef)
-                        for coef, pauli in zip(
-                            ctx.hamiltonian.coefs, ctx.hamiltonian.paulis
-                        )
-                    ]
-                ),
-            )
-            .result()
-            .values[0]
+        # HACK: Waste transpiling.
+        transpiled_circuit = transpile(
+            circuit,
+            ctx.system_model,
+            optimization_level=0,
+            seed_transpiler=ctx.seed,
         )
+        counts = (
+            ctx.noisy_simulator.run(transpiled_circuit, shots=ctx.shots)
+            .result()
+            .get_counts(0)
+        )
+        expectation_val, _ = ctx.readout_mitigator.expectation_value(counts)
+        return expectation_val
 
-    return compute_expectation
+    return run_circuit
 
 
 def get_pauli_expectations(
@@ -138,33 +127,11 @@ def run_vqe_iter(
         The computed energy in each iteration.
     """
     start = timer()
-
-    # NOTE: We only compute the important part when execute locally.
-    energy = zne.execute_with_zne(
-        ctx.ansatz.bind_parameters(params),
-        lambda circuit: Estimator(
-            run_options={"seed": ctx.seed, "shots": ctx.shots},
-            transpile_options={
-                "optimization_level": 2,
-                "backend": ctx.system_model,
-                "seed_transpiler":ctx.seed,
-            },
-            backend=ctx.noisy_simulator,
-        )
-        .run(
-            circuit,
-            SparsePauliOp.from_list(
-                [
-                    (pauli, coef)
-                    for coef, pauli in zip(
-                        ctx.hamiltonian.coefs, ctx.hamiltonian.paulis
-                    )
-                ]
-            ),
-        )
-        .result()
-        .values[0],
+    pauli_expectations = get_pauli_expectations(
+        ctx=ctx, paulis=ctx.hamiltonian.paulis, params=params
     )
+    # NOTE: We only compute the important part when execute locally.
+    energy = np.inner(ctx.hamiltonian.coefs, pauli_expectations)
     end = timer()
     print(f"Energy computed by VQE is {energy}, in {end - start}s.")
 
@@ -196,10 +163,22 @@ def run_vqe(
         the best parameters during VQE iterations.
     """
 
+    # HINT: Check number of parameters given.
+    num_params = get_param_num(
+        ctx.num_qubits, ctx.vqe_kwargs.get("ansatz_reps", 2)
+    )
+    param_guess = ctx.prepared_cafqa_params
+    if len(param_guess) == 0:
+        param_guess = [0] * num_params
+    assert (
+        len(param_guess) == num_params
+    ), f"""The number of vales given doesn't match the number of parameters.
+    {len(param_guess)} are given but there are {num_params} parameters."""
+
     vqe_result = minimize(
         lambda x: run_vqe_iter(ctx, params=x),
-        x0=np.array(ctx.prepared_cafqa_params) * np.pi / 2.0,
-        bounds=np.array([[0, np.pi * 2]] * len(ctx.prepared_cafqa_params)),
+        x0=np.array(param_guess) * np.pi / 2.0,
+        bounds=np.array([[0, np.pi * 2]] * num_params),
         budget=ctx.budget,
         method=ctx.optimization_method,
     )
@@ -213,11 +192,3 @@ def solve(ctx: Context) -> None:
     with open(f"{ctx.save_dir}/ans.txt", "a") as file:
         file.write(f"energy:\n{energy}\n")
         file.write(f"params:\n{np.array(params)}\n")
-
-
-def debug(ctx: Context) -> None:
-    print(
-        get_ansatz(
-            ctx.num_qubits, ctx.system_model, **ctx.vqe_kwargs
-        ).num_parameters
-    )

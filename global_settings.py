@@ -1,10 +1,11 @@
-from pathlib import Path
 import pickle
 import random
 from argparse import Namespace
+from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Tuple, Union
 
 import numpy as np
+from qiskit import QuantumCircuit
 from qiskit.providers.fake_provider import FakeCairo, FakeKolkata, FakeMontreal
 from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
 from qiskit.utils import algorithm_globals
@@ -15,7 +16,7 @@ from qiskit_experiments.library import (
     LocalReadoutError,
 )
 
-from vqe_utils import init_molecule
+from vqe_utils import get_ansatz, init_molecule
 
 Hamiltonian = NamedTuple(
     "Hamiltonian",
@@ -41,6 +42,7 @@ Context = NamedTuple(
         ("shots", int),
         ("hamiltonian", Hamiltonian),
         ("vqe_kwargs", Dict[str, Any]),
+        ("ansatz", QuantumCircuit),
         ("prepared_cafqa_params", List[int]),
     ],
 )
@@ -153,6 +155,13 @@ def get_context(args: Namespace) -> Context:
     _seed_everything(args.seed)
     save_dir = Path(args.save)
     save_dir.mkdir(exist_ok=True)
+    vqe_kwargs = {
+        "ansatz_reps": 2,
+        "init_last": False,
+        "HF_bitstring": HF_bitstring,
+        "readout_error_mitigation": True,
+    }
+    system_model = FakeMontreal()
     return Context(
         readout_mitigator=_get_readout_mitigator(
             args.readout_mitigator, num_qubits, noisy_simulator
@@ -160,18 +169,14 @@ def get_context(args: Namespace) -> Context:
         num_qubits=num_qubits,
         noisy_simulator=noisy_simulator,
         optimization_method=args.optimizer,
-        system_model=FakeMontreal(),
+        system_model=system_model,
         budget=args.budget,
         save_dir=save_dir,
         seed=args.seed,
         shots=args.shots,
         hamiltonian=Hamiltonian(coefs=coefs, paulis=paulis),
-        vqe_kwargs={
-            "ansatz_reps": 2,
-            "init_last": False,
-            "HF_bitstring": HF_bitstring,
-            "readout_error_mitigation": True,
-        },
+        vqe_kwargs=vqe_kwargs,
+        ansatz=get_ansatz(num_qubits, system_model, **vqe_kwargs),
         prepared_cafqa_params=[
             0,
             0,

@@ -1,7 +1,7 @@
 __pycache__
-NoiseModel/.*.pkl:ZoneIndentifier
+NoiseModel/*.pkl:ZoneIndentifier
 .vscode
 .idea
 .DS_Store
 result
-test.py
+test_*
