@@ -142,28 +142,34 @@ def run_vqe_iter(
     # NOTE: We only compute the important part when execute locally.
     energy = zne.execute_with_zne(
         ctx.ansatz.bind_parameters(params),
-        lambda circuit: Estimator(
-            run_options={"seed": ctx.seed, "shots": ctx.shots},
-            transpile_options={
-                "optimization_level": 2,
-                "backend": ctx.system_model,
-                "seed_transpiler":ctx.seed,
-            },
-            backend=ctx.noisy_simulator,
-        )
-        .run(
-            circuit,
-            SparsePauliOp.from_list(
-                [
-                    (pauli, coef)
-                    for coef, pauli in zip(
-                        ctx.hamiltonian.coefs, ctx.hamiltonian.paulis
-                    )
-                ]
-            ),
-        )
-        .result()
-        .values[0],
+        lambda circuit: np.mean(
+            [
+                Estimator(
+                    run_options={"seed": ctx.seed, "shots": ctx.shots},
+                    transpile_options={
+                        "optimization_level": 2,
+                        "backend": ctx.system_model,
+                        "seed_transpiler": ctx.seed,
+                    },
+                    mitigator=ctx.readout_mitigator,
+                    backend=ctx.noisy_simulator,
+                )
+                .run(
+                    circuit,
+                    SparsePauliOp.from_list(
+                        [
+                            (pauli, coef)
+                            for coef, pauli in zip(
+                                ctx.hamiltonian.coefs, ctx.hamiltonian.paulis
+                            )
+                        ]
+                    ),
+                )
+                .result()
+                .values[0]
+                for _ in range(4)
+            ]
+        ),
     )
     end = timer()
     print(f"Energy computed by VQE is {energy}, in {end - start}s.")
