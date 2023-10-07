@@ -33,6 +33,7 @@ noise_model_t = noise.NoiseModel()
 noise_model = noise_model_t.from_dict(noise_model)
 backend_noise= AerSimulator(noise_model=noise_model)
 #noise_model=NoiseModel.from_backend(FakeMontreal()) 
+backend_noise=AerSimulator()
 
 
 #read in and process the molecule infomation
@@ -163,6 +164,7 @@ def compute_expectations_zne(n_qubits, parameters,  noise_backend,paulis, shots,
     return expectations,unmitigated_expectations
 
 def exp_pauli(count_general, pauli, shots: int = 5000) -> float: #ac, 106, debug!! 或许应该是倒序的!因为qiskit是比特倒序
+    pauli=pauli[::-1] #debug
     # Convert from raw measurement counts to the expectation value
     #initiate the expectation value to 0
     expectation_val = 0
@@ -173,6 +175,7 @@ def exp_pauli(count_general, pauli, shots: int = 5000) -> float: #ac, 106, debug
     I_pos=[]
     M_pos=[]
     #记录测量的位置
+    #print(count_general) #debug
     for ind in range(len(pauli)):
         if pauli[ind]!='I':
             M_pos.append(ind)
@@ -200,7 +203,7 @@ def exp_pauli(count_general, pauli, shots: int = 5000) -> float: #ac, 106, debug
             p_str_g[i]='0'
         p_str_g="".join(p_str_g)
         count[p_str_g]+=count_general[pau]
-    print(count) #debug, ac, 106
+    #print(count) #debug, ac, 106
     #得到的count就是特殊化了的结果
     if mitigator!=None:
         expectation_val, _=mitigator.expectation_value(count)
@@ -231,7 +234,10 @@ def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis,
             expectations.append(1.0)
             unmitigated_expectations.append(1.0)
         else:
+            #t=pauli
+            #print(t)
             mitigated=exp_pauli(count,pauli,shots)
+            #print(t)
             unmitigated=0
             #mitigated = zne.execute_with_zne(imp_circuit, qiskit_executor)
             expectations.append(mitigated)
