@@ -3,13 +3,17 @@ from timeit import default_timer as timer
 from typing import Callable, List, Tuple
 
 import numpy as np
-from mitiq import zne
+from mitiq.zne import PolyExpFactory
 from qiskit import transpile
 from skquant.opt import minimize as skquant_minimize
 from scipy.optimize import minimize as scipy_minimize
 
 from global_settings import Context
 from vqe_utils import get_vqe_circuit, get_optimization_lib
+
+
+def _cal_escore(estimated: float) -> float:
+    return (1 - abs((estimated + 74.38714627) / 74.38714627)) * 100
 
 
 def _get_group_exp(ctx: Context, count_general, pauli):
@@ -64,7 +68,6 @@ def get_pauli_expectations(
     grouped_paulis,
     fold: Callable,
 ) -> List[float]:
-    # TODO: Pauli grouping with Qiskit.
     """Compute the expectations of each Pauli string.
 
     Parameters
@@ -91,6 +94,8 @@ def get_pauli_expectations(
         optimization_level=3,
         seed_transpiler=ctx.seed,
     )
+
+
     scaled_circuits = [fold(circuit, scale) for scale in ctx.zne_scale]
     counts = [
         ctx.noisy_simulator.run(circuit, shots=ctx.shots).result().get_counts()
@@ -101,9 +106,14 @@ def get_pauli_expectations(
     for count in counts:
         exp = _count_to_exps(ctx, count, grouped_paulis)
         scaled_expectations.append(exp)
+
     zne_exps = [
-        zne.RichardsonFactory.extrapolate(
+        ctx.zne_factory.extrapolate(
             ctx.zne_scale, [exp[i] for exp in scaled_expectations]
+        )
+        if ctx.zne_factory != PolyExpFactory
+        else PolyExpFactory.extrapolate(
+            ctx.zne_scale, [exp[i] for exp in scaled_expectations], 1
         )
         for i in range(len(scaled_expectations[0]))
     ]
@@ -138,9 +148,11 @@ def run_vqe_iter(
         fold=ctx.zne_fold,
     )
     end = timer()
-    energy = np.inner(ctx.hamiltonian.coefs, expectations)
+    energy = np.inner(ctx.hamiltonian.coefs, expectations) + 4.36537496654537
     print(f"======Condition: {ctx.modification}======")
-    print(f"Energy computed by VQE is {energy}, in {end - start}s.")
+    print(
+        f"Energy computed by VQE is {energy}, Escore={_cal_escore(energy)}, in {end - start}s."
+    )
 
     with open(
         f"{ctx.save_dir}/energy_log.{ctx.modification}.csv",
@@ -212,6 +224,8 @@ def run_vqe(
 
 def solve(ctx: Context) -> None:
     energy, params = run_vqe(ctx)
+    print(f"The final answer is {energy}")
+    print(f"Get Escore {_cal_escore(energy)}")
     with open(
         f"{ctx.save_dir}/ans.{ctx.modification}.txt",
         "a",
@@ -221,4 +235,6 @@ def solve(ctx: Context) -> None:
 
 
 def debug(ctx: Context) -> None:
-    pass
+    get_vqe_circuit(
+        ctx.num_qubits, None, "ZZZZZZZZZZZZ", **ctx.vqe_kwargs
+    ).qasm(f"ans/{ctx.modification}.qasm")

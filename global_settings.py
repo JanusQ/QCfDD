@@ -2,10 +2,17 @@ import pickle
 import random
 from argparse import Namespace
 from pathlib import Path
+from mitiq.zne import (
+    RichardsonFactory,
+    AdaExpFactory,
+    LinearFactory,
+    PolyExpFactory,
+    ExpFactory,
+)
 from typing import Any, Callable, Union, NamedTuple
 
 import numpy as np
-from mitiq.zne.scaling import fold_gates_at_random, fold_global
+from mitiq.zne.scaling import fold_gates_at_random, fold_global, fold_all
 from qiskit.providers.fake_provider import FakeCairo, FakeKolkata, FakeMontreal
 from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
 from qiskit.utils import algorithm_globals
@@ -44,6 +51,16 @@ Context = NamedTuple(
         ("vqe_kwargs", dict[str, Any]),
         ("prepared_cafqa_params", list[int]),
         ("zne_scale", list[float]),
+        (
+            "zne_factory",
+            Union[
+                RichardsonFactory,
+                AdaExpFactory,
+                PolyExpFactory,
+                LinearFactory,
+                ExpFactory,
+            ],
+        ),
         ("zne_fold", Callable),
         ("bounds_shift", tuple[float, float]),
         ("modification", str),
@@ -69,6 +86,23 @@ def _load_noise(noise_name: str) -> AerSimulator:
     return AerSimulator(noise_model=NoiseModel.from_dict(noise_dict))
 
 
+def _get_zne_factory(
+    factory_name: str,
+) -> Union[
+    RichardsonFactory, AdaExpFactory, LinearFactory, PolyExpFactory, ExpFactory
+]:
+    if factory_name == "Richardson":
+        return RichardsonFactory
+    elif factory_name == "AdaExp":
+        return AdaExpFactory
+    elif factory_name == "Linear":
+        return LinearFactory
+    elif factory_name == "Exp":
+        return ExpFactory
+    else:
+        return PolyExpFactory
+
+
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -81,6 +115,15 @@ def _get_quantum_info():
     )
     num_qubits = len(paulis[0])
     return coefs, paulis, hf_bitstring, num_qubits
+
+
+def _get_fold_func(func_name: str) -> str:
+    if func_name == "global":
+        return fold_global
+    elif func_name == "all":
+        return fold_all
+    else:
+        return fold_gates_at_random
 
 
 def _get_readout_mitigator(
@@ -180,9 +223,8 @@ def get_context(args: Namespace) -> Context:
         hamiltonian=Hamiltonian(coefs=coefs, paulis=paulis),
         vqe_kwargs=vqe_kwargs,
         zne_scale=args.zne_scale,
-        zne_fold=fold_global
-        if args.zne_fold == "global"
-        else fold_gates_at_random,
+        zne_fold=_get_fold_func(args.zne_fold),
+        zne_factory=_get_zne_factory(args.zne_factory),
         bounds_shift=tuple(args.bounds_shift),
         prepared_cafqa_params=[
             0,

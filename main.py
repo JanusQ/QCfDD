@@ -50,7 +50,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--budget",
         type=int,
-        default=500,
+        default=50,
         help="Budget for iterations. Defaults to 500.",
     )
     parser.add_argument(
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--entanglement",
         type=str,
-        default="full",
+        default="reverse_linear",
         choices=["full", "linear", "reverse_linear", "circular", "sca"],
         help="CNOT entanglement mode.",
     )
@@ -105,10 +105,19 @@ if __name__ == "__main__":
         can be considered as a large weight. Defaults to 1.0.""",
     )
     parser.add_argument(
-        "--zne_fold", type=str, default="global", choices=["global", "random"]
+        "--zne-factory",
+        type=str,
+        default="Richardson",
+        choices=["AdaExp", "Linear", "PolyExp", "Richardson","Exp"],
     )
     parser.add_argument(
-        "--zne_scale",
+        "--zne-fold",
+        type=str,
+        default="global",
+        choices=["global", "random", "all"],
+    )
+    parser.add_argument(
+        "--zne-scale",
         type=float,
         default=[1.0, 2.0, 3.0],
         nargs="+",

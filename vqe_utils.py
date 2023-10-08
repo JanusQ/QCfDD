@@ -165,7 +165,8 @@ def _efficientsu2_full(num_qubits, **kwargs):
 def _add_ansatz(circuit, parameters, **kwargs):
     num_qubits = circuit.num_qubits
     ansatz, _ = _efficientsu2_full(num_qubits, **kwargs)
-    ansatz.assign_parameters(parameters=parameters, inplace=True)
+    if parameters is not None:
+        ansatz.assign_parameters(parameters=parameters, inplace=True)
     circuit.compose(ansatz, inplace=True)
 
 
@@ -225,8 +226,7 @@ def get_vqe_circuit(
     if not init_last:
         _append_by_hartreefock(circuit, HF_bitstring)
     # HINT: Append the circuit with the state preparation ansatz.
-    if params is not None:
-        _add_ansatz(circuit, params, **kwargs)
+    _add_ansatz(circuit, params, **kwargs)
     if init_last:
         _append_by_hartreefock(circuit, HF_bitstring)
 
@@ -244,6 +244,7 @@ def get_vqe_circuit(
             circuit.sx(qr[i])
             circuit.s(qr[i])
             circuit.measure(qr[i], cr[i])
+
     return circuit
 
 
