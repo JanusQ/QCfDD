@@ -33,7 +33,7 @@ noise_model_t = noise.NoiseModel()
 noise_model = noise_model_t.from_dict(noise_model)
 backend_noise= AerSimulator(noise_model=noise_model)
 #noise_model=NoiseModel.from_backend(FakeMontreal()) 
-backend_noise=AerSimulator()
+#backend_noise=AerSimulator()
 
 
 #read in and process the molecule infomation
@@ -52,10 +52,10 @@ from qiskit_experiments.library import LocalReadoutError, CorrelatedReadoutError
 #temporary comment
 exp = LocalReadoutError(list(range(n_qubits)))
 exp.analysis.set_options(plot=True)
-#result = exp.run(backend_noise)
+result = exp.run(backend_noise)
 #print(result)
-#mitigator = result.analysis_results(0).value
-mitigator=None
+mitigator = result.analysis_results(0).value
+#mitigator=None
 
 #debug
 cafqa_params=[0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 3, 0, 3, 1, 0, 1, 0, 2, 0, 1, 0, 0, 2, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 ,2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 1]
@@ -164,7 +164,7 @@ def compute_expectations_zne(n_qubits, parameters,  noise_backend,paulis, shots,
     return expectations,unmitigated_expectations
 
 def exp_pauli(count_general, pauli, shots: int = 5000) -> float: #ac, 106, debug!! 或许应该是倒序的!因为qiskit是比特倒序
-    pauli=pauli[::-1] #debug
+    pauli=pauli[::-1] #ac, 107, bug fixed
     # Convert from raw measurement counts to the expectation value
     #initiate the expectation value to 0
     expectation_val = 0
@@ -217,18 +217,9 @@ def exp_pauli(count_general, pauli, shots: int = 5000) -> float: #ac, 106, debug
             expectation_val += sign*count[el]/shots #ac, bug fix 10.3
     return expectation_val
 
-def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis, shots, backend, mitigator=None, mode="device_execution", **vqe_kwargs):
-    #implement Pauli string grouping， 我们先考虑实现imp_terms的pauli grouping
-    #grouped_paulis: ['IIIZIIII..',...]
-    #默认为在ZZZZZZZZZZZZ上的测量
-    full_string='ZZZZZZZZZZZZ'
+def count_to_exp(count,grouped_paulis,shots):
     expectations=[]
     unmitigated_expectations=[]
-    imp_circuit=vqe_circuit(n_qubits, parameters, full_string, **vqe_kwargs)
-    imp_circuit=transpile(imp_circuit, sys_backend, optimization_level=3, seed_transpiler=seed_transpiler)
-    #暂时先不考虑zne
-    result = noise_backend.run(imp_circuit, shots=shots).result() #ac: bug fixed, add ', shots=shots'
-    count = result.get_counts(0)
     for pauli in grouped_paulis:
         if pauli == len(pauli)*'I':
             expectations.append(1.0)
@@ -242,9 +233,41 @@ def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis,
             #mitigated = zne.execute_with_zne(imp_circuit, qiskit_executor)
             expectations.append(mitigated)
             unmitigated_expectations.append(unmitigated)
-            
+    return expectations, unmitigated_expectations
+
+from mitiq.zne.scaling import fold_gates_at_random
+def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis, shots, backend, mitigator=None, mode="device_execution", **vqe_kwargs):
+    #implement Pauli string grouping， 我们先考虑实现imp_terms的pauli grouping
+    #grouped_paulis: ['IIIZIIII..',...]
+    #默认为在ZZZZZZZZZZZZ上的测量
+    full_string='ZZZZZZZZZZZZ'
+    
+    imp_circuit=vqe_circuit(n_qubits, parameters, full_string, **vqe_kwargs)
+    imp_circuit=transpile(imp_circuit, sys_backend, optimization_level=3, seed_transpiler=seed_transpiler)
+    #zne
+    scale_factors = [1.0, 3.0, 5.0]
+    #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s, frozenset({"single"})) for s in scale_factors] #debug, ac ,107
+    #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s) for s in scale_factors] #debug, ac ,107
+    #result = noise_backend.run(imp_circuit, shots=shots).result() #ac: bug fixed, add ', shots=shots'
+    noise_scaled_circuits=[]
+    for scale in scale_factors:
+        #noise_scaled_circuits.append(fold_gates_at_random(imp_circuit,scale))
+        noise_scaled_circuits.append(zne.scaling.folding.fold_all(imp_circuit,scale))
+
+    counts= [noise_backend.run(circ, shots=shots).result().get_counts(0) for circ in noise_scaled_circuits]
+    #count = result.get_counts(0)
+    noise_scaled_expectations=[]
+    _s=[]
+    for count in counts:
+        n_s_exp, _ =count_to_exp(count,grouped_paulis,shots)
+        noise_scaled_expectations.append(n_s_exp)
+        print(np.inner(imp_coeffs,np.array(n_s_exp))) #debug, ac, 107
+        #_s.append(_)
+    #ac, 107, 下面这里似乎可以优化
+    zne_exps=[zne.RichardsonFactory.extrapolate(scale_factors, [n_s_exp[i] for n_s_exp in noise_scaled_expectations]) for i in range(len(noise_scaled_expectations[0]))]
     #unmitigated_expectations is for debugging only, ac
-    return expectations,unmitigated_expectations
+    return zne_exps,_s
+#output type: [[...],[...],[...]]
 
 important_terms=find_imp_terms(coeffs,threshold=1) #format:[1,8,13,...] indexes
 #important_terms.pop(0) #ac: temporary,debug
@@ -367,11 +390,24 @@ def run_vqe(n_qubits, coeffs, paulis, param_guess, budget, shots, backend, save_
 print('with trivial terms. zne and Correlated rem')
 loss_file = "vqe_zr_v2_loss.txt"
 params_file = "vqe_zr_v2_params.txt"
+param_opt=[0. ,        0.         ,2.98688926 ,2.58339461 ,0.         ,0.,
+    0.         ,0.         ,0.         ,0.         ,1.01313148 ,3.14319601,
+    2.58261584 ,0.20817678 ,5.2007137  ,0.10125831 ,5.73518555 ,2.62909896,
+    0.         ,2.22222271 ,3.14159265 ,1.53906846 ,0.13063739 ,2.04435016,
+    0.         ,0.         ,3.42746151 ,2.26183267 ,2.09763435 ,0.,
+    0.         ,0.12739264 ,3.49059922 ,0.23761872 ,0.         ,2.94616676,
+    0.82189412 ,0.28525685 ,0.         ,0.         ,0.52413173 ,0.02564584,
+    0.         ,1.46091479 ,3.65022412 ,0.40997528 ,0.36562667 ,0.40822707,
+    0.         ,0.06235023 ,2.53703665 ,0.         ,1.45211572 ,0.,
+    0.         ,0.5074251  ,0.         ,0.06492288 ,1.28400197 ,1.11638919,
+    4.37006697 ,0.         ,0.         ,1.63430003 ,0.         ,0.98905667,
+    4.06202049 ,3.63869133 ,0.39477228 ,0.         ,0.60164374 ,0.48114904]
 vqe_energy, vqe_params = run_vqe(
     n_qubits=n_qubits,
     coeffs=coeffs,
     paulis=paulis,
     param_guess=np.array(cafqa_params)*np.pi/2, #注意,cafqa_params是由CAFQA部分函数计算所得的在Clifford空间中最佳的参数,本段程序是想要在此基础上求得在vqe空间中的最佳参数,并优化cafqa部分所算得的energy的结果
+    #param_guess=param_opt,
     budget=budget,
     shots=shots,
     mode="device_execution",

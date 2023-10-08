@@ -246,7 +246,7 @@ def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis,
     imp_circuit=vqe_circuit(n_qubits, parameters, full_string, **vqe_kwargs)
     imp_circuit=transpile(imp_circuit, sys_backend, optimization_level=3, seed_transpiler=seed_transpiler)
     #zne
-    scale_factors = [1.0, 3.0, 5.0]
+    scale_factors = [1.0, 2.0, 3.0]
     #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s, frozenset({"single"})) for s in scale_factors] #debug, ac ,107
     #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s) for s in scale_factors] #debug, ac ,107
     #result = noise_backend.run(imp_circuit, shots=shots).result() #ac: bug fixed, add ', shots=shots'
