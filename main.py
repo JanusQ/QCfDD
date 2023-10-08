@@ -1,7 +1,7 @@
 from argparse import ArgumentParser, MetavarTypeHelpFormatter
 
 from global_settings import get_context
-from run import solve, debug
+from run import debug, solve
 
 if __name__ == "__main__":
     parser = ArgumentParser(
@@ -31,6 +31,12 @@ if __name__ == "__main__":
         type=int,
         default=500,
         help="Budget for iterations. Defaults to 500.",
+    )
+    parser.add_argument(
+        "--bounds-shift",
+        type=float,
+        default=[0.25, 0.25],
+        nargs=2,
     )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
@@ -69,6 +75,17 @@ if __name__ == "__main__":
         The absolute value of coefficients which is larger than the threshold
         can be considered as a large weight. Defaults to 1.0.""",
     )
-    # print(get_context(parser.parse_args()))
+    parser.add_argument(
+        "--zne_fold", type=str, default="global", choices=["global", "random"]
+    )
+    parser.add_argument(
+        "--zne_scale",
+        type=float,
+        default=[1.0, 2.0, 3.0],
+        nargs="+",
+        help="Scale factor for ZNE.",
+    )
+
     args = parser.parse_args()
+    print(args)
     (debug if args.debug else solve)(get_context(args))

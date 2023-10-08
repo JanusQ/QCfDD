@@ -5,11 +5,10 @@ import json
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import copy
-from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
 from timeit import default_timer as timer
 from typing import Tuple, Union
 from warnings import warn
-from qiskit_aer import AerError
+
 import hypermapper
 import numpy as np
 import stim
@@ -21,16 +20,14 @@ from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.opflow import PauliSumOp
 from qiskit.primitives import BaseEstimator, EstimatorResult
 from qiskit.primitives.primitive_job import PrimitiveJob
-from qiskit.primitives.utils import (
-    _circuit_key,
-    _observable_key,
-    init_observable,
-)
+from qiskit.primitives.utils import (_circuit_key, _observable_key,
+                                     init_observable)
 from qiskit.providers import Options
 from qiskit.quantum_info import Pauli, PauliList
 from qiskit.quantum_info.operators.base_operator import BaseOperator
+from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
 from qiskit.result.models import ExperimentResult
-from qiskit_aer import AerSimulator
+from qiskit_aer import AerError, AerSimulator
 from qiskit_nature.second_q.circuit.library import HartreeFock
 from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.mappers import JordanWignerMapper, QubitConverter

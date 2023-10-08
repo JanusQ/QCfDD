@@ -2,9 +2,10 @@ import pickle
 import random
 from argparse import Namespace
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Tuple, Union
+from typing import Any, Callable, Union, NamedTuple
 
 import numpy as np
+from mitiq.zne.scaling import fold_gates_at_random, fold_global
 from qiskit import QuantumCircuit
 from qiskit.providers.fake_provider import FakeCairo, FakeKolkata, FakeMontreal
 from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
@@ -16,13 +17,13 @@ from qiskit_experiments.library import (
     LocalReadoutError,
 )
 
-from vqe_utils import get_ansatz, init_molecule
+from vqe_utils import init_molecule
 
 Hamiltonian = NamedTuple(
     "Hamiltonian",
     [
-        ("coefs", List[float]),
-        ("paulis", List[str]),
+        ("coefs", list[float]),
+        ("paulis", list[str]),
     ],
 )
 Context = NamedTuple(
@@ -41,9 +42,11 @@ Context = NamedTuple(
         ("seed", int),
         ("shots", int),
         ("hamiltonian", Hamiltonian),
-        ("vqe_kwargs", Dict[str, Any]),
-        ("ansatz", QuantumCircuit),
-        ("prepared_cafqa_params", List[int]),
+        ("vqe_kwargs", dict[str, Any]),
+        ("prepared_cafqa_params", list[int]),
+        ("zne_scale", list[float]),
+        ("zne_fold", Callable[[QuantumCircuit, list[float]]]),
+        ("bounds_shift", tuple[float, float]),
     ],
 )
 
@@ -94,7 +97,7 @@ def _get_readout_mitigator(
 
 def _find_important_terms(
     coefs: np.ndarray, threshold: float = 1.0
-) -> List[int]:
+) -> list[int]:
     """Find important pauli strings which need
     to be applied ZNE to improve accuracy.
 
@@ -118,8 +121,8 @@ def _find_important_terms(
 
 
 def _simplify_paulis(
-    important_terms: List[int], coefs: np.ndarray, paulis: np.ndarray
-) -> Tuple[List[float], List[str]]:
+    important_terms: list[int], coefs: np.ndarray, paulis: np.ndarray
+) -> tuple[list[float], list[str]]:
     """Divide Pauli strings into important and trivial parts.
 
     Parameters
@@ -159,7 +162,6 @@ def get_context(args: Namespace) -> Context:
         "ansatz_reps": 2,
         "init_last": False,
         "HF_bitstring": HF_bitstring,
-        "readout_error_mitigation": True,
     }
     system_model = FakeMontreal()
     return Context(
@@ -176,7 +178,11 @@ def get_context(args: Namespace) -> Context:
         shots=args.shots,
         hamiltonian=Hamiltonian(coefs=coefs, paulis=paulis),
         vqe_kwargs=vqe_kwargs,
-        ansatz=get_ansatz(num_qubits, system_model, **vqe_kwargs),
+        zne_scale=args.zne_scale,
+        zne_fold=fold_global
+        if args.zne_fold == "global"
+        else fold_gates_at_random,
+        bounds_shift=tuple(args.bounds_shift),
         prepared_cafqa_params=[
             0,
             0,
