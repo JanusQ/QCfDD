@@ -3,6 +3,7 @@
 #We will account for the trivial terms, and will use Local REM technique for higher accuray.
 #and pay attention that we have changed the vqe_helper, circuit.sx(qr[i]); circuit.s(qr[i])
 #implement paulistring grouping
+#改进了!
 from qiskit.circuit.library import RealAmplitudes
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.providers.fake_provider import FakeMontreal
@@ -22,7 +23,7 @@ seed = 170
 algorithm_globals.random_seed = seed
 seed_transpiler = seed
 shots = 6000
-budget = 300 #budget is for optimization iterations
+budget = 100 #budget is for optimization iterations
 
 #read the noise model
 import qiskit.providers.aer.noise as noise
@@ -59,6 +60,9 @@ mitigator = result.analysis_results(0).value
 
 #debug
 cafqa_params=[0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 3, 0, 3, 1, 0, 1, 0, 2, 0, 1, 0, 0, 2, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 ,2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 1]
+#ac, 108, debug
+cafqa_params=[0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 3, 0, 3, 1, 0, 1, 0, 2, 0, 1, 0, 0, 2, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 ,2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 1]
+
 # VQE with CAFQA initialization
 #vqe params
 parameters=cafqa_params
@@ -245,14 +249,14 @@ def compute_expectations_zr(n_qubits, parameters,  noise_backend,grouped_paulis,
     imp_circuit=vqe_circuit(n_qubits, parameters, full_string, **vqe_kwargs)
     imp_circuit=transpile(imp_circuit, sys_backend, optimization_level=3, seed_transpiler=seed_transpiler)
     #zne
-    scale_factors = [1.0, 3.0, 5.0]
+    scale_factors = [1.0, 2.0, 3.0]
     #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s, frozenset({"single"})) for s in scale_factors] #debug, ac ,107
     #noise_scaled_circuits = [zne.scaling.folding.fold_all(imp_circuit, s) for s in scale_factors] #debug, ac ,107
     #result = noise_backend.run(imp_circuit, shots=shots).result() #ac: bug fixed, add ', shots=shots'
     noise_scaled_circuits=[]
     for scale in scale_factors:
         #noise_scaled_circuits.append(fold_gates_at_random(imp_circuit,scale))
-        noise_scaled_circuits.append(zne.scaling.folding.fold_all(imp_circuit,scale))
+        noise_scaled_circuits.append(zne.scaling.folding.fold_global(imp_circuit,scale))
 
     counts= [noise_backend.run(circ, shots=shots).result().get_counts(0) for circ in noise_scaled_circuits]
     #count = result.get_counts(0)
@@ -360,7 +364,9 @@ def run_vqe(n_qubits, coeffs, paulis, param_guess, budget, shots, backend, save_
         param_guess = [0] * num_params
     assert len(param_guess) == num_params, f"Number of parameters given ({len(param_guess)}) does not match ansatz ({num_params})." 
 
-    bounds = np.array([[0, np.pi*2]]*num_params)  #>>> b=[[1,0]]*3  >>> b  [[1, 0], [1, 0], [1, 0]]  上下界
+    #bounds = np.array([[0, np.pi*2]]*num_params)  #>>> b=[[1,0]]*3  >>> b  [[1, 0], [1, 0], [1, 0]]  上下界
+    k=0.9
+    bounds = np.array([[max(param_guess[i]-np.pi/4,0), min(param_guess[i]+np.pi/4,np.pi*1.5)] for i in range(num_params)])
     initial_point = np.array(param_guess)
     #print('run_vqe') #debug,ac
     vqe_result = minimize(
