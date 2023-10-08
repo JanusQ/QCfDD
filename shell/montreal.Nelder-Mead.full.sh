@@ -1,0 +1,1 @@
+python main.py -n montreal -o Nelder-Mead --entanglement full --readout-mitigator correlated

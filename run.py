@@ -5,10 +5,11 @@ from typing import Callable, List, Tuple
 import numpy as np
 from mitiq import zne
 from qiskit import transpile
-from skquant.opt import minimize
+from skquant.opt import minimize as skquant_minimize
+from scipy.optimize import minimize as scipy_minimize
 
 from global_settings import Context
-from vqe_utils import get_vqe_circuit
+from vqe_utils import get_vqe_circuit, get_optimization_lib
 
 
 def _get_group_exp(ctx: Context, count_general, pauli):
@@ -138,13 +139,20 @@ def run_vqe_iter(
     )
     end = timer()
     energy = np.inner(ctx.hamiltonian.coefs, expectations)
+    print(f"======Condition: {ctx.modification}======")
     print(f"Energy computed by VQE is {energy}, in {end - start}s.")
 
-    with open(f"{ctx.save_dir}/energy_log.csv", "a") as file:
+    with open(
+        f"{ctx.save_dir}/energy_log.{ctx.modification}.csv",
+        "a",
+    ) as file:
         writer = csv.writer(file)
         writer.writerow([energy])
 
-    with open(f"{ctx.save_dir}/params_log.csv", "a") as file:
+    with open(
+        f"{ctx.save_dir}/params_log.{ctx.modification}.csv",
+        "a",
+    ) as file:
         writer = csv.writer(file)
         writer.writerow([energy])
         writer.writerow(params)
@@ -178,22 +186,36 @@ def run_vqe(
             for param in params_guess
         ]
     )
+    if get_optimization_lib(ctx.optimization_method) == "scipy":
+        vqe_result = scipy_minimize(
+            lambda x: run_vqe_iter(ctx, x),
+            x0=params_guess,
+            bounds=bounds,
+            method=ctx.optimization_method,
+            options={"maxiter": ctx.budget},
+        )
+        energy_vqe = vqe_result.fun
+        params_vqe = vqe_result.x
 
-    vqe_result = minimize(
-        lambda x: run_vqe_iter(ctx, params=x),
-        x0=params_guess,
-        bounds=bounds,
-        budget=ctx.budget,
-        method=ctx.optimization_method,
-    )
-    energy_vqe = vqe_result[0].optval
-    params_vqe = vqe_result[0].optpar
+    else:
+        vqe_result = skquant_minimize(
+            lambda x: run_vqe_iter(ctx, params=x),
+            x0=params_guess,
+            bounds=bounds,
+            budget=ctx.budget,
+            method=ctx.optimization_method,
+        )
+        energy_vqe = vqe_result[0].optval
+        params_vqe = vqe_result[0].optpar
     return energy_vqe, params_vqe
 
 
 def solve(ctx: Context) -> None:
     energy, params = run_vqe(ctx)
-    with open(f"{ctx.save_dir}/ans.txt", "a") as file:
+    with open(
+        f"{ctx.save_dir}/ans.{ctx.modification}.txt",
+        "a",
+    ) as file:
         file.write(f"energy:\n{energy}\n")
         file.write(f"params:\n{np.array(params)}\n")
 

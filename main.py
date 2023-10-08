@@ -1,7 +1,8 @@
 from argparse import ArgumentParser, MetavarTypeHelpFormatter
-
 from global_settings import get_context
+
 from run import debug, solve
+
 
 if __name__ == "__main__":
     parser = ArgumentParser(
@@ -23,7 +24,27 @@ if __name__ == "__main__":
         "--optimizer",
         type=str,
         default="imfil",
-        choices=["imfil", "snobfit", "nomad", "bobyqa", "orbit"],
+        choices=[
+            "imfil",
+            "snobfit",
+            "nomad",
+            "bobyqa",
+            "orbit",
+            "Nelder-Mead",
+            "Powell",
+            "CG",
+            "BFGS",
+            "Newton-CG",
+            "L-BFGS-B",
+            "TNC",
+            "COBYLA",
+            "SLSQP",
+            "trust-constr",
+            "dogleg",
+            "trust-ncg",
+            "trust-exact",
+            "trust-krylov",
+        ],
         help="Optimizer for VQE. Defaults to imfil.",
     )
     parser.add_argument(
@@ -37,8 +58,16 @@ if __name__ == "__main__":
         type=float,
         default=[0.25, 0.25],
         nargs=2,
+        help="Shift for minimization",
     )
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--entanglement",
+        type=str,
+        default="full",
+        choices=["full", "linear", "reverse_linear", "circular", "sca"],
+        help="CNOT entanglement mode.",
+    )
     parser.add_argument(
         "--readout-mitigator",
         type=str,

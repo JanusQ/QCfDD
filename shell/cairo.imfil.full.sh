@@ -1,0 +1,1 @@
+python main.py -n cairo -o imfil --entanglement full --readout-mitigator correlated

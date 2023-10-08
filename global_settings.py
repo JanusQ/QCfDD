@@ -6,7 +6,6 @@ from typing import Any, Callable, Union, NamedTuple
 
 import numpy as np
 from mitiq.zne.scaling import fold_gates_at_random, fold_global
-from qiskit import QuantumCircuit
 from qiskit.providers.fake_provider import FakeCairo, FakeKolkata, FakeMontreal
 from qiskit.result import CorrelatedReadoutMitigator, LocalReadoutMitigator
 from qiskit.utils import algorithm_globals
@@ -45,8 +44,9 @@ Context = NamedTuple(
         ("vqe_kwargs", dict[str, Any]),
         ("prepared_cafqa_params", list[int]),
         ("zne_scale", list[float]),
-        ("zne_fold", Callable[[QuantumCircuit, list[float]]]),
+        ("zne_fold", Callable),
         ("bounds_shift", tuple[float, float]),
+        ("modification", str),
     ],
 )
 
@@ -162,6 +162,7 @@ def get_context(args: Namespace) -> Context:
         "ansatz_reps": 2,
         "init_last": False,
         "HF_bitstring": HF_bitstring,
+        "entanglement": args.entanglement,
     }
     system_model = FakeMontreal()
     return Context(
@@ -257,4 +258,5 @@ def get_context(args: Namespace) -> Context:
             0,
             1,
         ],
+        modification=f"{args.noise}.{args.optimizer}.{args.entanglement}",
     )

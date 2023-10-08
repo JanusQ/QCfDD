@@ -20,8 +20,11 @@ from qiskit.converters import circuit_to_dag, dag_to_circuit
 from qiskit.opflow import PauliSumOp
 from qiskit.primitives import BaseEstimator, EstimatorResult
 from qiskit.primitives.primitive_job import PrimitiveJob
-from qiskit.primitives.utils import (_circuit_key, _observable_key,
-                                     init_observable)
+from qiskit.primitives.utils import (
+    _circuit_key,
+    _observable_key,
+    init_observable,
+)
 from qiskit.providers import Options
 from qiskit.quantum_info import Pauli, PauliList
 from qiskit.quantum_info.operators.base_operator import BaseOperator
@@ -33,6 +36,28 @@ from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.mappers import JordanWignerMapper, QubitConverter
 from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
 from qiskit_nature.units import DistanceUnit
+
+
+def get_optimization_lib(method: str) -> str:
+    if method in [
+        "Nelder-Mead",
+        "Powell",
+        "CG",
+        "BFGS",
+        "Newton-CG",
+        "L-BFGS-B",
+        "TNC",
+        "COBYLA",
+        "SLSQP",
+        "trust-constr",
+        "dogleg",
+        "trust-ncg",
+        "trust-exact",
+        "trust-krylov",
+    ]:
+        return "scipy"
+    elif method in ["imfil", "snobfit", "nomad", "bobyqa"]:
+        return "skquant"
 
 
 def get_param_num(num_qubits: int, ansatz_reps: int) -> int:
@@ -126,21 +151,20 @@ def _append_by_hartreefock(
             circuit.x(i)
 
 
-def _efficientsu2_full(num_qubits, repetitions):
+def _efficientsu2_full(num_qubits, **kwargs):
     ansatz = EfficientSU2(
         num_qubits=num_qubits,
-        entanglement="full",
-        reps=repetitions,
-        insert_barriers=True,
+        entanglement=kwargs.get("entanglement", "full"),
+        reps=kwargs.get("ansatz_reps", 2),
     )
     num_params_ansatz = len(ansatz.parameters)
     ansatz = ansatz.decompose()
     return ansatz, num_params_ansatz
 
 
-def _add_ansatz(circuit, parameters, ansatz_reps=1):
+def _add_ansatz(circuit, parameters, **kwargs):
     num_qubits = circuit.num_qubits
-    ansatz, _ = _efficientsu2_full(num_qubits, ansatz_reps)
+    ansatz, _ = _efficientsu2_full(num_qubits, **kwargs)
     ansatz.assign_parameters(parameters=parameters, inplace=True)
     circuit.compose(ansatz, inplace=True)
 
@@ -202,7 +226,7 @@ def get_vqe_circuit(
         _append_by_hartreefock(circuit, HF_bitstring)
     # HINT: Append the circuit with the state preparation ansatz.
     if params is not None:
-        _add_ansatz(circuit, params, kwargs.get("ansatz_reps", 1))
+        _add_ansatz(circuit, params, **kwargs)
     if init_last:
         _append_by_hartreefock(circuit, HF_bitstring)
 

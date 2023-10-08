@@ -1,0 +1,1 @@
+python main.py -n montreal -o imfil --entanglement linear --readout-mitigator correlated
