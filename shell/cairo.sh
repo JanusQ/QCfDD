@@ -1,0 +1,1 @@
+python main.py -n cairo -o SLSQP --entanglement linear --readout-mitigator correlated --zne-fold global --zne-scale 1 2 3 --shots 6000 --zne-factory Linear
