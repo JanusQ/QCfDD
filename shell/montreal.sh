@@ -1,0 +1,1 @@
+python main.py -n montreal -o imfil --entanglement full --readout-mitigator correlated --zne-fold all --zne-scale 1 3 5 --shots 6000
